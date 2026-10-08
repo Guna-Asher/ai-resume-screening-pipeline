@@ -69,11 +69,14 @@ ELIGIBILITY_AI = frozenset({"llm", "rag", "tools", "frameworks", "eval_ai"})
 # Signals that show real work beyond a bare LLM call (used by the thin-project penalty).
 MEANINGFUL = frozenset({"rag", "tools", "orch_generic", "eval", "data", "backend", "database"})
 
+# Past, present (-s) and -ing forms. Deliberately no bare "use/used/using": "used ChatGPT" is not implementation.
 IMPLEMENTATION_VERBS = _rx(
-    r"built", r"build(?:ing)?", r"implemented", r"developed", r"designed", r"created", r"engineered",
-    r"integrated", r"architected", r"deployed", r"wrote", r"automated", r"optimi[sz]ed", r"orchestrated",
-    r"configured", r"trained", r"fine-tuned", r"shipped", r"launched", r"migrated", r"added",
-    r"containeri[sz]ed", r"reduced", r"improved", r"authored", r"constructed")
+    r"built", r"builds?", r"building", r"implemented", r"implements?", r"implementing", r"developed", r"develops?",
+    r"developing", r"designed", r"designs", r"designing", r"created", r"creates", r"creating", r"engineered",
+    r"integrated", r"integrates", r"integrating", r"architected", r"deployed", r"deploys", r"deploying", r"wrote",
+    r"automated", r"automates", r"optimi[sz]ed", r"orchestrated", r"configured", r"trained", r"fine-tuned",
+    r"shipped", r"launched", r"migrated", r"added", r"containeri[sz]ed", r"reduced", r"improved", r"authored",
+    r"constructed", r"leverag(?:e|es|ed|ing)", r"utili[sz](?:e|es|ed|ing)", r"employs?", r"employed")
 
 TUTORIAL_MARKERS = _rx(r"tutorials?", r"udemy", r"coursera", r"bootcamp", r"course project",
                        r"follow(?:ed|ing) (?:a |the )?(?:tutorial|guide|along)")

@@ -17,5 +17,6 @@ COPY --chown=app:app scripts ./scripts
 RUN mkdir -p resumes output && chown app:app resumes output
 USER app
 
+EXPOSE 8000
 # Secrets come from --env-file / the environment at run time, never from the image.
 CMD ["python", "main.py", "--help"]

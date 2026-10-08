@@ -12,10 +12,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.extraction import extract_with_llm, ground_resume  # noqa: E402
-from src.ingestion import ingest_directory  # noqa: E402
 from src.llm import OpenRouterClient  # noqa: E402
 from src.models import IngestionStatus  # noqa: E402
-from tests.pdf_fixtures import RESUME_LINES, make_scanned_pdf  # noqa: E402
+from tests.pdf_fixtures import RESUME_LINES, ingest_dir, make_scanned_pdf  # noqa: E402
 
 
 def main() -> int:
@@ -25,7 +24,7 @@ def main() -> int:
         return 0
     with tempfile.TemporaryDirectory() as tmp:
         make_scanned_pdf(Path(tmp) / "synthetic_scan.pdf", RESUME_LINES)
-        doc = ingest_directory(Path(tmp))[0]
+        doc = ingest_dir(Path(tmp))[0]
         assert doc.status is IngestionStatus.NEEDS_FALLBACK, "fixture should have no text layer"
         print(f"model: {client.model}")
         extracted = extract_with_llm(doc, client)        # raises ExtractionError on any failure

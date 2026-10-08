@@ -8,8 +8,9 @@ Credit rule for a signal worth N points:
 
 Final = sum(categories) - thin-AI-project penalty, clamped to 0..100.
 """
-from src.models import ExtractedResume, ScoreBreakdown
+from src.models import ExtractedResume, GitHubEnrichment, ScoreBreakdown
 
+from .github import github_points
 from .signals import MEANINGFUL, THIN_DESCRIPTION_WORDS, Document, build_documents, python_in_skills
 
 PYTHON_SKILLS_ONLY = 3.0  # < half of the 12 Python points: a skills list is not implementation
@@ -100,15 +101,18 @@ def thin_ai_penalty(docs: list[Document], notes: list[str]) -> float:
     return penalty
 
 
-def score_resume(resume: ExtractedResume) -> ScoreBreakdown:
-    """Call only for eligible candidates. GitHub is 0 until enrichment exists."""
+def score_resume(resume: ExtractedResume, github: GitHubEnrichment | None = None) -> ScoreBreakdown:
+    """Call only for eligible candidates. `github` is optional; without a successful lookup it scores 0."""
     docs = build_documents(resume)
     notes: list[str] = []
+    ai = score_ai(docs, notes)
+    backend = score_python_backend(resume, docs, notes)
+    cloud = score_cloud_fullstack(docs, notes)
+    gh_points, gh_notes = github_points(github)
+    notes += gh_notes
     return ScoreBreakdown(
-        ai_project_depth=score_ai(docs, notes),
-        python_backend=score_python_backend(resume, docs, notes),
-        cloud_fullstack=score_cloud_fullstack(docs, notes),
-        github_activity=0.0,
+        ai_project_depth=ai, python_backend=backend, cloud_fullstack=cloud,
+        github_activity=gh_points,
         engineering_depth=score_engineering(docs, notes),
         penalty=thin_ai_penalty(docs, notes),
         notes=notes,

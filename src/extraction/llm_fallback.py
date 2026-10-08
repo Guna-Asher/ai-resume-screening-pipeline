@@ -77,7 +77,7 @@ def extract_with_llm(doc: IngestedDocument, llm: JSONVisionClient | None,
         raise ExtractionError("fallback extraction needed but the PDF path is unknown")
     try:
         images = [ImagePart(IMAGE_MIME, data) for data in render_pages(doc.path, max_pages)]
-    except Exception as e:
+    except (RuntimeError, ValueError, OSError) as e:   # PyMuPDF raises RuntimeError subclasses for bad PDFs
         raise ExtractionError(f"could not render PDF pages: {type(e).__name__}: {e}") from None
 
     schema = strict_json_schema(ResumeExtraction)

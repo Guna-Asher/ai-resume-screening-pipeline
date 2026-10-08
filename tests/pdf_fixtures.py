@@ -1,7 +1,11 @@
 """Synthetic PDFs: a digital text PDF and an image-only ("scanned") PDF."""
+import tempfile
+import zipfile
 from pathlib import Path
 
 import pymupdf
+
+from src.ingestion import collect_inputs, ingest_paths
 
 
 def _esc(s: str) -> str:
@@ -69,3 +73,37 @@ RESUME_LINES = [
     "EDUCATION",
     "B.Tech Computer Science, Example Institute of Technology, 2021 - 2025",
 ]
+
+
+def ingest_dir(path: Path):
+    """Ingest every PDF under `path` (the same route the app uses)."""
+    with tempfile.TemporaryDirectory() as work:
+        return ingest_paths(collect_inputs(path, Path(work)).pdfs)
+
+
+def make_zip(path: Path, entries: dict[str, bytes]) -> None:
+    with zipfile.ZipFile(path, "w") as zf:
+        for name, data in entries.items():
+            zf.writestr(name, data)   # writestr keeps names verbatim, including "../" for zip-slip tests
+
+
+def pdf_bytes(tmp_dir: Path, lines: list[str] = RESUME_LINES) -> bytes:
+    p = tmp_dir / "_tmp_fixture.pdf"
+    make_pdf(p, lines)
+    data = p.read_bytes()
+    p.unlink()
+    return data
+
+
+def make_linked_pdf(path: Path, lines: list[str], uri: str) -> None:
+    """Text PDF where 'GitHub' is a hyperlink to `uri` (the URL itself is not visible text)."""
+    doc = pymupdf.open()
+    page = doc.new_page()
+    y = 60
+    for line in lines:
+        page.insert_text((40, y), line, fontsize=10)
+        y += 12
+    page.insert_text((40, y), "GitHub", fontsize=10)
+    page.insert_link({"kind": pymupdf.LINK_URI, "from": pymupdf.Rect(40, y - 10, 80, y + 2), "uri": uri})
+    doc.save(path)
+    doc.close()

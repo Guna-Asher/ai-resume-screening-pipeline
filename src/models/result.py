@@ -22,6 +22,7 @@ class ScreeningResult(BaseModel):
     score: ScoreBreakdown | None = None   # None unless RANKED
     github: GitHubEnrichment | None = None
     project_summary: str = ""
+    concerns: list[str] = Field(default_factory=list)  # penalty + GitHub problems, derived by code
     rank: int | None = None               # None unless RANKED
     error: str | None = None              # set only for FAILED
 
@@ -32,6 +33,7 @@ class BatchSummary(BaseModel):
     rejected: int = 0
     failed: int = 0
     duplicates_skipped: int = 0
+    ignored_files: list[str] = Field(default_factory=list)  # non-PDF files skipped (e.g. in a ZIP)
     llm_fallback_extractions: int = 0  # resumes whose text came from the vision LLM
     duration_seconds: float = 0.0
     results: list[ScreeningResult] = Field(default_factory=list)

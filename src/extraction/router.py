@@ -1,4 +1,8 @@
-"""Choose how to extract a document: free deterministic text parsing first, vision LLM only if needed."""
+"""Choose how to extract a document.
+
+Usable pypdf text -> rule-based parser (never an LLM, even if the layout is unfamiliar).
+Unusable text (scanned / image-only / garbled) -> render pages -> vision LLM.
+"""
 from src.llm import JSONVisionClient
 from src.models import ExtractedResume, IngestedDocument, IngestionStatus
 
@@ -14,15 +18,10 @@ class ResumeExtractor:
 
     def __call__(self, doc: IngestedDocument) -> ExtractedResume:
         if doc.status is IngestionStatus.OK:
-            resume = parse_resume_text(doc.source_file, doc.text)
-            if resume.projects or resume.experience:
-                return resume  # normal digital PDF: no LLM call
-            reason = "text extracted but no project/experience section recognised"
-        elif doc.status is IngestionStatus.NEEDS_FALLBACK:
-            reason = "too little usable text (scanned or image-only PDF)"
-        else:
-            raise ExtractionError(f"document not extractable: {doc.status.value}")
-        try:
-            return extract_with_llm(doc, self.llm)
-        except ExtractionError as e:
-            raise ExtractionError(f"{reason}; {e}") from None
+            return parse_resume_text(doc.source_file, doc.text)
+        if doc.status is IngestionStatus.NEEDS_FALLBACK:
+            try:
+                return extract_with_llm(doc, self.llm)
+            except ExtractionError as e:
+                raise ExtractionError(f"too little usable text (scanned or image-only PDF); {e}") from None
+        raise ExtractionError(f"document not extractable: {doc.status.value}")

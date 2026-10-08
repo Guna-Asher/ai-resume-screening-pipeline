@@ -46,11 +46,12 @@ def test_scanned_pdf_invokes_the_llm_fallback_and_is_screened_deterministically(
     assert r.rank == 1
 
 
-def test_text_pdf_without_recognisable_sections_falls_back_to_llm(tmp_path):
+def test_unfamiliar_layout_never_triggers_the_llm_and_is_a_visible_failure(tmp_path):
     make_pdf(tmp_path / "odd.pdf", [f"Selected Work item {i}: built a Python RAG chatbot with FAISS" for i in range(8)])
     llm = FakeLLM()
-    run_batch(tmp_path, ResumeExtractor(llm))
-    assert len(llm.calls) == 1
+    r = by_file(run_batch(tmp_path, ResumeExtractor(llm)))["odd.pdf"]
+    assert llm.calls == []
+    assert r.status is ScreeningStatus.FAILED and "could not parse" in r.error
 
 
 def test_llm_failures_are_isolated_per_candidate(tmp_path):

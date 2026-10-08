@@ -1,18 +1,17 @@
 import pytest
 
 from src.extraction import ExtractionError, ground_resume, extract_with_llm
-from src.ingestion import ingest_directory
-from src.models import ExtractedProject, ExtractedResume, IngestionStatus
+from src.models import ExtractedResume, IngestionStatus
 from src.screening import check_eligibility, score_resume
 
 from .llm_fakes import FakeLLM, as_json, strong_extraction, timeout_error
-from .pdf_fixtures import LINES, make_scanned_pdf
+from .pdf_fixtures import LINES, ingest_dir, make_scanned_pdf
 
 
 @pytest.fixture
 def scanned_doc(tmp_path):
     make_scanned_pdf(tmp_path / "scan.pdf", LINES)
-    doc = ingest_directory(tmp_path)[0]
+    doc = ingest_dir(tmp_path)[0]
     assert doc.status is IngestionStatus.NEEDS_FALLBACK   # image-only PDF: pypdf finds no text
     return doc
 

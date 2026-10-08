@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Resume Screening</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --text:#1c2230; --muted:#667085; --line:#e2e5eb; --accent:#2f5bea;
+          --ok:#1a7f4b; --bad:#b42318; --warn:#9a6700; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#12151c; --card:#1b1f29; --text:#e8eaf0; --muted:#98a2b3; --line:#2c3240; --accent:#7b9bff;
+            --ok:#4cc38a; --bad:#ff7b72; --warn:#e3b341; } }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:15px/1.5 system-ui,-apple-system,Segoe UI,sans-serif; }
+  main { max-width:960px; margin:0 auto; padding:32px 16px 64px; }
+  h1 { margin:0 0 4px; font-size:28px; } h2 { font-size:17px; margin:28px 0 8px; }
+  p.lead { margin:0 0 24px; color:var(--muted); }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; }
+  #drop { border:2px dashed var(--line); border-radius:10px; padding:36px 16px; text-align:center; cursor:pointer;
+          background:var(--card); }
+  #drop.over, #drop:focus-visible { border-color:var(--accent); outline:none; }
+  #drop small { color:var(--muted); }
+  ul#files { list-style:none; margin:12px 0 0; padding:0; }
+  ul#files li { display:flex; gap:12px; align-items:center; padding:8px 0; border-top:1px solid var(--line); }
+  ul#files .name { flex:1; overflow-wrap:anywhere; } ul#files .meta { color:var(--muted); white-space:nowrap; }
+  button { font:inherit; padding:8px 16px; border-radius:8px; border:1px solid var(--line); background:var(--card);
+           color:var(--text); cursor:pointer; }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#fff; font-weight:600; }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  .actions { margin-top:16px; display:flex; gap:8px; flex-wrap:wrap; }
+  .spinner { width:22px; height:22px; border:3px solid var(--line); border-top-color:var(--accent); border-radius:50%;
+             animation:spin 1s linear infinite; display:inline-block; vertical-align:middle; margin-right:10px; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  #error { border-color:var(--bad); color:var(--bad); }
+  .stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); gap:10px; }
+  .stat b { display:block; font-size:24px; } .stat span { color:var(--muted); font-size:13px; }
+  table { width:100%; border-collapse:collapse; background:var(--card); border:1px solid var(--line); }
+  th, td { padding:8px 10px; text-align:left; border-bottom:1px solid var(--line); }
+  th { font-size:12px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); }
+  td.num, th.num { text-align:right; font-variant-numeric:tabular-nums; }
+  tr.row { cursor:pointer; } tr.row:hover { background:var(--bg); }
+  tr.detail td { background:var(--bg); } tr.detail h4 { margin:10px 0 2px; font-size:13px; color:var(--muted); }
+  tr.detail ul { margin:0; padding-left:18px; }
+  .scroll { overflow-x:auto; }
+  .reasons li { color:var(--bad); } .concern { color:var(--warn); }
+  body[data-state="IDLE"] .only-files, body[data-state="IDLE"] #processing, body[data-state="IDLE"] #results, body[data-state="IDLE"] #error,
+  body[data-state="FILES_SELECTED"] #processing, body[data-state="FILES_SELECTED"] #results, body[data-state="FILES_SELECTED"] #error,
+  body[data-state="PROCESSING"] #upload, body[data-state="PROCESSING"] #results, body[data-state="PROCESSING"] #error,
+  body[data-state="SUCCESS"] #upload, body[data-state="SUCCESS"] #processing, body[data-state="SUCCESS"] #error,
+  body[data-state="ERROR"] #processing, body[data-state="ERROR"] #results { display:none; }
+</style>
+</head>
+<body data-state="IDLE">
+<main>
+  <h1>AI Resume Screening</h1>
+  <p class="lead">Upload resumes and generate an explainable ranked shortlist.</p>
+
+  <section id="upload">
+    <div id="drop" tabindex="0" role="button" aria-label="Choose PDF or ZIP files">
+      <strong>Drag and drop PDF or ZIP files here</strong><br><small>or click to browse. Several files, or a ZIP of resumes, are fine.</small>
+      <input id="picker" type="file" accept=".pdf,.zip,application/pdf,application/zip" multiple hidden>
+    </div>
+    <ul id="files" class="only-files"></ul>
+    <div class="actions only-files">
+      <button id="run" class="primary">Run Screening</button>
+      <button id="clear">Clear</button>
+    </div>
+  </section>
+
+  <section id="processing" class="card"><span class="spinner"></span>Screening resumes...</section>
+
+  <section id="error" class="card"><strong>Something went wrong.</strong>
+    <p id="errmsg"></p><button id="retry">Back to upload</button></section>
+
+  <section id="results">
+    <div class="stats" id="stats"></div>
+    <div class="actions"><button id="download" class="primary">Download results.json</button>
+      <button id="again">Screen more resumes</button></div>
+    <h2>Ranked candidates</h2>
+    <div class="scroll"><table id="ranked"><thead><tr><th class="num">Rank</th><th>Candidate</th>
+      <th class="num">Total</th><th class="num">AI / 40</th><th class="num">Python / 30</th><th class="num">Cloud / 15</th>
+      <th class="num">GitHub / 10</th><th class="num">Engineering / 5</th></tr></thead><tbody></tbody></table></div>
+    <h2>Rejected</h2><div id="rejected" class="card"></div>
+    <h2>Failed</h2><div id="failed" class="card"></div>
+  </section>
+</main>
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const ALLOWED = [".pdf", ".zip"];
+  let files = [], resultText = "";
+
+  function setState(s) { document.body.dataset.state = s; }
+  function el(tag, text, cls) {              // textContent only: resume text is untrusted, never markup
+    const n = document.createElement(tag);
+    if (text !== undefined) n.textContent = text;
+    if (cls) n.className = cls;
+    return n;
+  }
+  const kb = (n) => n < 1048576 ? (n / 1024).toFixed(0) + " KB" : (n / 1048576).toFixed(1) + " MB";
+  const ext = (name) => name.slice(name.lastIndexOf(".")).toLowerCase();
+
+  function addFiles(list) {
+    for (const f of list) {
+      if (!ALLOWED.includes(ext(f.name))) { alert("Only PDF and ZIP files are supported: " + f.name); continue; }
+      if (!files.some((g) => g.name === f.name && g.size === f.size && g.lastModified === f.lastModified)) files.push(f);
+    }
+    renderFiles();
+  }
+  function renderFiles() {
+    const ul = $("files"); ul.replaceChildren();
+    files.forEach((f, i) => {
+      const li = el("li");
+      const rm = el("button", "Remove"); rm.onclick = () => { files.splice(i, 1); renderFiles(); };
+      li.append(el("span", f.name, "name"), el("span", ext(f.name) === ".zip" ? "ZIP" : "PDF", "meta"),
+                el("span", kb(f.size), "meta"), rm);
+      ul.append(li);
+    });
+    setState(files.length ? "FILES_SELECTED" : "IDLE");
+  }
+
+  const drop = $("drop");
+  drop.onclick = () => $("picker").click();
+  drop.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); $("picker").click(); } };
+  $("picker").onchange = (e) => { addFiles(e.target.files); e.target.value = ""; };
+  ["dragenter", "dragover"].forEach((t) => drop.addEventListener(t, (e) => { e.preventDefault(); drop.classList.add("over"); }));
+  ["dragleave", "drop"].forEach((t) => drop.addEventListener(t, (e) => { e.preventDefault(); drop.classList.remove("over"); }));
+  drop.addEventListener("drop", (e) => addFiles(e.dataTransfer.files));
+  $("clear").onclick = () => { files = []; renderFiles(); };
+  $("retry").onclick = $("again").onclick = () => { setState(files.length ? "FILES_SELECTED" : "IDLE"); };
+
+  $("run").onclick = async () => {
+    setState("PROCESSING");
+    const body = new FormData();
+    files.forEach((f) => body.append("files", f, f.name));
+    try {
+      const resp = await fetch("/api/screen", { method: "POST", body });
+      const text = await resp.text();
+      if (!resp.ok) {
+        let msg = "Request failed (" + resp.status + ").";
+        try { const d = JSON.parse(text).detail; if (typeof d === "string") msg = d; } catch (_) {}
+        return showError(msg);
+      }
+      resultText = text;                      // the exact backend JSON, used as-is for the download
+      showResults(JSON.parse(text));
+    } catch (_) {
+      showError("Could not reach the server. Check your connection and try again.");
+    }
+  };
+  function showError(msg) { $("errmsg").textContent = msg; setState("ERROR"); }
+
+  const fmt = (n) => Number.isInteger(n) ? String(n) : n.toFixed(1);
+  function list(items, cls) { const ul = el("ul", undefined, cls); items.forEach((t) => ul.append(el("li", t))); return ul; }
+  function section(title, content) { const d = el("div"); d.append(el("h4", title), content); return d; }
+
+  function githubSummary(g) {
+    if (!g) return "Not checked";
+    if (g.status !== "ok") return g.status + (g.error ? " - " + g.error : "");
+    return g.username + ": " + g.relevant_repos + " relevant repos, " + g.recently_active_repos + " active in last " +
+      g.recent_days + " days, " + g.python_repos + " Python, " + g.ai_repos + " AI/LLM";
+  }
+
+  function showResults(s) {
+    const stats = $("stats"); stats.replaceChildren();
+    [["Total resumes", s.total_files], ["Ranked", s.ranked], ["Rejected", s.rejected], ["Failed", s.failed],
+     ["Duplicates", s.duplicates_skipped], ["Duration", s.duration_seconds + " s"]].forEach(([k, v]) => {
+      const d = el("div", undefined, "card stat"); d.append(el("b", String(v)), el("span", k)); stats.append(d);
+    });
+
+    const tbody = document.querySelector("#ranked tbody"); tbody.replaceChildren();
+    const ranked = s.results.filter((r) => r.status === "ranked");
+    if (!ranked.length) { const tr = el("tr"); const td = el("td", "No candidates were ranked."); td.colSpan = 8; tr.append(td); tbody.append(tr); }
+    ranked.forEach((r) => {
+      const sc = r.score, name = (r.candidate && r.candidate.name) || r.source_file;
+      const tr = el("tr", undefined, "row");
+      [r.rank, name, sc.total, sc.ai_project_depth, sc.python_backend, sc.cloud_fullstack, sc.github_activity, sc.engineering_depth]
+        .forEach((v, i) => tr.append(el("td", typeof v === "number" ? fmt(v) : v, i === 1 ? "" : "num")));
+      const detail = el("tr", undefined, "detail"); detail.hidden = true;
+      const td = el("td"); td.colSpan = 8;
+      td.append(section("Source file", el("div", r.source_file)),
+                section("Matched skills", el("div", (r.eligibility.matched_signals || []).join(", ") || "-")),
+                section("Project summary", el("div", r.project_summary || "-")),
+                section("Score notes" + (sc.penalty ? " (penalty -" + fmt(sc.penalty) + ")" : ""), list(sc.notes)),
+                section("GitHub", el("div", githubSummary(r.github))));
+      if (r.concerns.length) td.append(section("Concerns", list(r.concerns, "concern")));
+      detail.append(td);
+      tr.onclick = () => { detail.hidden = !detail.hidden; };
+      tbody.append(tr, detail);
+    });
+
+    fill($("rejected"), s.results.filter((r) => r.status === "rejected"),
+         (r) => [(r.candidate && r.candidate.name) || r.source_file, r.eligibility.rejection_reasons]);
+    fill($("failed"), s.results.filter((r) => r.status === "failed"), (r) => [r.source_file, [r.error]]);
+    setState("SUCCESS");
+  }
+  function fill(box, items, pick) {
+    box.replaceChildren();
+    if (!items.length) { box.append(el("span", "None")); return; }
+    items.forEach((r) => { const [title, reasons] = pick(r); const d = el("div"); d.append(el("strong", title), list(reasons, "reasons")); box.append(d); });
+  }
+
+  $("download").onclick = () => {
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([resultText], { type: "application/json" }));
+    a.download = "results.json"; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  };
+})();
+</script>
+</body>
+</html>

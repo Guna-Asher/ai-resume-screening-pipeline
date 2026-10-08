@@ -85,6 +85,9 @@ def test_generic_ai_skill_with_no_project_or_job_evidence_rejects():
     "Built a RAG pipeline using OpenAI embeddings and FAISS.",
     "Implemented a LangGraph agent with tool calling.",
     "Developed an application using the OpenAI API.",
+    "The system leverages LLM/RAG techniques to answer queries over a SQLite database.",
+    "A chatbot that integrates the OpenAI API for customer support.",
+    "Developing an agent in Python that uses tool calling.",
 ])
 def test_genuine_ai_implementation_is_accepted(text):
     assert _ai_eligible(text).eligible
