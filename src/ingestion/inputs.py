@@ -58,6 +58,7 @@ class PdfInput:
 class InputProblem:
     name: str
     message: str   # safe to show to users
+    code: str      # stable machine-readable reason
 
 
 @dataclass
@@ -76,14 +77,15 @@ class _Collector:
         self._zips = 0
         self.full = False
 
-    def problem(self, name: str, message: str) -> None:
-        self.out.problems.append(InputProblem(name, message))
+    def problem(self, name: str, message: str, code: str) -> None:
+        self.out.problems.append(InputProblem(name, message, code))
 
     def add_pdf(self, path: Path, name: str) -> None:
         if len(self.out.pdfs) >= self.limits.max_files:
             if not self.full:
                 self.full = True
-                self.problem("(input)", f"more than {self.limits.max_files} PDFs; the rest were not processed")
+                self.problem("(input)", f"More than {self.limits.max_files} PDFs were provided; the rest were not processed.",
+                             "too_many_files")
             return
         unique, n = name, 2
         while unique in self._names:
@@ -98,7 +100,7 @@ class _Collector:
                 self.add_path(child, child.name if name == "." else f"{name}/{child.name}")
         elif suffix == ".pdf":
             if path.stat().st_size > self.limits.max_file_bytes:
-                self.problem(name, f"PDF larger than {self.limits.max_file_bytes // MB} MB; skipped")
+                self.problem(name, f"PDF is larger than {self.limits.max_file_bytes // MB} MB and was skipped.", "file_too_large")
             else:
                 self.add_pdf(path, name)
         elif suffix == ".zip":
@@ -108,7 +110,7 @@ class _Collector:
 
     def add_zip(self, path: Path, name: str) -> None:
         if path.stat().st_size > self.limits.max_archive_bytes:
-            return self.problem(name, f"ZIP larger than {self.limits.max_archive_bytes // MB} MB; skipped")
+            return self.problem(name, f"ZIP is larger than {self.limits.max_archive_bytes // MB} MB and was skipped.", "zip_too_large")
         self._zips += 1
         dest = (self.workdir / f"zip{self._zips}").resolve()
         dest.mkdir(parents=True)
@@ -119,7 +121,7 @@ class _Collector:
                         break
                     self._extract_entry(zf, info, dest, name)
         except (zipfile.BadZipFile, OSError, NotImplementedError):
-            self.problem(name, "unreadable or corrupt ZIP archive")
+            self.problem(name, "The ZIP archive is unreadable or corrupt.", "corrupt_zip")
 
     def _extract_entry(self, zf: zipfile.ZipFile, info: zipfile.ZipInfo, dest: Path, zip_name: str) -> None:
         if info.is_dir():
@@ -128,31 +130,32 @@ class _Collector:
         parts = PurePosixPath(rel).parts
         label = f"{zip_name}/{rel}"
         if rel.startswith("/") or ".." in parts or re.match(r"^[A-Za-z]:", rel):
-            return self.problem(label, "unsafe path in ZIP (path traversal); entry rejected")
+            return self.problem(label, "Unsafe path in ZIP (path traversal); entry rejected.", "unsafe_zip_entry")
         if "__MACOSX" in parts or parts[-1].startswith("."):
             return  # OS metadata, not a user file
         if not rel.lower().endswith(".pdf"):
             self.out.ignored.append(label)  # includes nested ZIPs: archives are not unpacked recursively
             return
         if info.file_size > self.limits.max_file_bytes:
-            return self.problem(label, f"PDF larger than {self.limits.max_file_bytes // MB} MB; skipped")
+            return self.problem(label, f"PDF is larger than {self.limits.max_file_bytes // MB} MB and was skipped.",
+                                "file_too_large")
         target = (dest / rel).resolve()
         if not target.is_relative_to(dest):
-            return self.problem(label, "unsafe path in ZIP (path traversal); entry rejected")
+            return self.problem(label, "Unsafe path in ZIP (path traversal); entry rejected.", "unsafe_zip_entry")
         target.parent.mkdir(parents=True, exist_ok=True)
         try:
             written = self._copy_limited(zf, info, target)
         except (RuntimeError, zipfile.BadZipFile, zlib.error, OSError):
             target.unlink(missing_ok=True)
-            return self.problem(label, "could not extract this entry (corrupt or encrypted)")
+            return self.problem(label, "This entry could not be extracted (corrupt or encrypted).", "corrupt_zip_entry")
         if written is None:
             target.unlink(missing_ok=True)
-            return self.problem(label, "entry exceeds the size limit; skipped")
+            return self.problem(label, "This entry exceeds the size limit and was skipped.", "file_too_large")
         self._extracted += written
         if self._extracted > self.limits.max_extracted_bytes:
             self.full = True
             target.unlink(missing_ok=True)
-            return self.problem(zip_name, "extracted size limit reached; remaining entries skipped")
+            return self.problem(zip_name, "The extracted-size limit was reached; remaining entries were skipped.", "extracted_size_limit")
         self.add_pdf(target, label)
 
     def _copy_limited(self, zf: zipfile.ZipFile, info: zipfile.ZipInfo, target: Path) -> int | None:

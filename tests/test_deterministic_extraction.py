@@ -52,3 +52,11 @@ def test_parser_output_survives_grounding_and_feeds_eligibility():
 
 def test_parser_is_deterministic():
     assert parse_resume_text("a.pdf", TEXT) == parse_resume_text("a.pdf", TEXT)
+
+
+def test_link_labels_do_not_become_projects():
+    text = ("PROJECTS\nVoice Agent | Python, FastAPI\nLive Demo\n- Built a real-time voice agent with tool calling.\n"
+            "GitHub\n- Implemented appointment booking.\nNotes App\n- Built a notes app.\n")
+    projects = parse_resume_text("a.pdf", text).projects
+    assert [p.name for p in projects] == ["Voice Agent", "Notes App"]
+    assert "voice agent" in projects[0].description and "appointment booking" in projects[0].description

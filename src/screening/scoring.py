@@ -24,13 +24,28 @@ ENGINEERING_COMPONENTS = [("testing", 1), ("modular", 1), ("reliability", 1), ("
                           ("observability", 1)]
 
 
+SIGNAL_NAMES = {
+    "llm": "LLM", "rag": "RAG/retrieval", "tools": "tools/agents", "orch_generic": "orchestration",
+    "frameworks": "orchestration framework", "eval": "evaluation", "data": "data processing", "python": "Python",
+    "backend": "backend/API", "async": "async/concurrency", "database": "database", "cloud": "cloud/deployment",
+    "docker": "Docker/containers", "frontend": "frontend/full-stack", "testing": "testing",
+    "modular": "modular design", "reliability": "reliability", "cache_queue": "caching/queues",
+    "observability": "observability",
+}
+
+
 def _credit(docs: list[Document], signal: str, points: float) -> tuple[float, str | None]:
+    """Full points if some entry shows the signal together with an implementation verb, half for a bare
+    mention. The note names the entry and quotes the text responsible, so every point is traceable."""
     hits = [d for d in docs if signal in d.signals]
     if not hits:
         return 0.0, None
-    if any(d.has_implementation for d in hits):
-        return float(points), f"+{points:g} {signal} (implementation evidence)"
-    return points / 2, f"+{points / 2:g} {signal} (mention only)"
+    implemented = [d for d in hits if d.has_implementation]
+    source = (implemented or hits)[0]
+    got, how = (float(points), "implementation") if implemented else (points / 2, "mention only")
+    quote = source.evidence(signal)
+    note = f"+{got:g} {SIGNAL_NAMES[signal]} ({how}) | {source.kind}: {source.label}"
+    return got, note + (f' | "{quote}"' if quote else "")
 
 
 def _sum(docs: list[Document], components: list[tuple[str, float]], notes: list[str]) -> float:
@@ -54,7 +69,7 @@ def score_ai(docs: list[Document], notes: list[str]) -> float:
             notes.append(g_note)
     else:
         total += named
-        notes.append(n_note.replace("frameworks", "orchestration framework"))
+        notes.append(n_note)
     return min(total, 40.0)
 
 

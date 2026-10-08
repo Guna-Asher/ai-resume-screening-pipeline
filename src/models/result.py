@@ -24,7 +24,8 @@ class ScreeningResult(BaseModel):
     project_summary: str = ""
     concerns: list[str] = Field(default_factory=list)  # penalty + GitHub problems, derived by code
     rank: int | None = None               # None unless RANKED
-    error: str | None = None              # set only for FAILED
+    error: str | None = None              # set only for FAILED: a clean, user-facing message
+    error_code: str | None = None         # set only for FAILED: stable machine-readable reason
 
 
 class BatchSummary(BaseModel):

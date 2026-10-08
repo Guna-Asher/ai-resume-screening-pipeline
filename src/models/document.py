@@ -18,4 +18,5 @@ class IngestedDocument(BaseModel):
     text: str = ""
     page_count: int = 0
     duplicate_of: str | None = None
-    error: str | None = None
+    error: str | None = None        # technical detail, for logs only
+    error_code: str | None = None

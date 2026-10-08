@@ -11,10 +11,10 @@ import httpx
 from src.extraction import ResumeExtractor
 from src.llm import OpenRouterClient
 from src.models import ScreeningStatus
-from src.pipeline import run_batch, write_summary
+from src.pipeline import run_batch, summary_json, write_summary
 
 from .llm_fakes import FakeLLM, as_json, strong_extraction, timeout_error
-from .pdf_fixtures import LINES, RESUME_LINES, make_pdf, make_scanned_pdf
+from .pdf_fixtures import LINES, RESUME_LINES, make_pdf, make_scanned_pdf, make_zip
 
 
 def by_file(summary):
@@ -51,7 +51,8 @@ def test_unfamiliar_layout_never_triggers_the_llm_and_is_a_visible_failure(tmp_p
     llm = FakeLLM()
     r = by_file(run_batch(tmp_path, ResumeExtractor(llm)))["odd.pdf"]
     assert llm.calls == []
-    assert r.status is ScreeningStatus.FAILED and "could not parse" in r.error
+    assert r.status is ScreeningStatus.FAILED and r.error_code == "unparseable_layout"
+    assert "layout could not be reliably parsed" in r.error
 
 
 def test_llm_failures_are_isolated_per_candidate(tmp_path):
@@ -64,8 +65,9 @@ def test_llm_failures_are_isolated_per_candidate(tmp_path):
     summary = run_batch(tmp_path, ResumeExtractor(llm))
     got = by_file(summary)
     assert got["a_digital.pdf"].status is ScreeningStatus.RANKED
-    assert "timed out" in got["b_scan_timeout.pdf"].error
-    assert "RuntimeError" in got["c_scan_ratelimit.pdf"].error
+    assert "timed out" in got["b_scan_timeout.pdf"].error and got["b_scan_timeout.pdf"].error_code == "llm_call_failed"
+    assert got["c_scan_ratelimit.pdf"].error_code == "internal_error"          # unexpected bug: generic message
+    assert "RuntimeError" not in got["c_scan_ratelimit.pdf"].error and "unexpected" in got["c_scan_ratelimit.pdf"].error
     assert "invalid structured output" in got["d_scan_garbage.pdf"].error
     assert got["e_broken.pdf"].status is ScreeningStatus.FAILED
     assert (summary.ranked, summary.failed) == (1, 4)
@@ -140,3 +142,21 @@ def test_no_secret_or_raw_text_in_output_file(tmp_path, capsys):
     assert secret not in text and "raw_text" not in text
     seen = capsys.readouterr()
     assert secret not in seen.out and secret not in seen.err
+
+
+def test_failed_results_are_clean_and_machine_readable(tmp_path):
+    """No exception class names, tracebacks or temp paths in what users (and the JSON) see."""
+    make_pdf(tmp_path / "odd.pdf", [f"Selected Work item {i}: built a Python RAG chatbot" for i in range(8)])
+    make_scanned_pdf(tmp_path / "scan.pdf", LINES)
+    (tmp_path / "bad.pdf").write_bytes(b"not a pdf")
+    make_zip(tmp_path / "bad.zip", {"x.txt": b"x"})
+    (tmp_path / "bad.zip").write_bytes(b"not a zip")
+    llm = FakeLLM(RuntimeError("secret internal detail at /tmp/xyz"))
+    summary = run_batch(tmp_path, ResumeExtractor(llm))
+    failed = [r for r in summary.results if r.status is ScreeningStatus.FAILED]
+    assert {r.error_code for r in failed} == {"unparseable_layout", "internal_error", "unreadable_pdf", "corrupt_zip"}
+    blob = json.dumps([r.model_dump(mode="json") for r in failed])
+    for leaked in ("Error", "Traceback", "ValueError", "RuntimeError", "/tmp", "secret internal detail", "pypdf"):
+        assert leaked not in blob.replace("OCR fallback", ""), leaked
+    assert all(r.error and r.score is None and r.rank is None for r in failed)
+    assert "error_code" in summary_json(summary)

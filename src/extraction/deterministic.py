@@ -30,6 +30,7 @@ EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 GITHUB = re.compile(r"(?:https?://)?(?:www\.)?github\.com/[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})", re.I)
 YEAR = re.compile(r"\b(?:19|20)\d{2}\b")
 TECH_LINE = re.compile(r"^\s*(?:tech(?:nologies)?(?: stack)?|stack|built with|tools|tech used)\s*[:\-]\s*(.+)$", re.I)
+LINK_LABEL = re.compile(r"^(?:live\s+)?(?:demo|github|source(?:\s+code)?|code|repo(?:sitory)?|link|links|video|website|deployed)$", re.I)
 MAX_HEADER_CHARS = 120
 
 
@@ -63,8 +64,8 @@ def _looks_title_case(line: str) -> bool:
 
 
 def _is_entry_header(line: str, prev: str, prev_blank: bool) -> bool:
-    if len(line) > MAX_HEADER_CHARS or line[0].islower() or TECH_LINE.match(line):
-        return False  # long prose, a wrapped continuation line, or a "Tech: ..." line
+    if len(line) > MAX_HEADER_CHARS or line[0].islower() or TECH_LINE.match(line) or LINK_LABEL.match(line.strip(" |:-")):
+        return False  # long prose, a wrapped continuation, a "Tech: ..." line, or a link label like "Live Demo"
     cue = "|" in line or bool(YEAR.search(line)) or " – " in line or " — " in line or _looks_title_case(line)
     if line.endswith(".") and "|" not in line:
         return False

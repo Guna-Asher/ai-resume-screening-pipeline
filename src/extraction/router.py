@@ -20,8 +20,5 @@ class ResumeExtractor:
         if doc.status is IngestionStatus.OK:
             return parse_resume_text(doc.source_file, doc.text)
         if doc.status is IngestionStatus.NEEDS_FALLBACK:
-            try:
-                return extract_with_llm(doc, self.llm)
-            except ExtractionError as e:
-                raise ExtractionError(f"too little usable text (scanned or image-only PDF); {e}") from None
-        raise ExtractionError(f"document not extractable: {doc.status.value}")
+            return extract_with_llm(doc, self.llm)
+        raise ExtractionError("internal_error", f"Document cannot be extracted (status: {doc.status.value}).")

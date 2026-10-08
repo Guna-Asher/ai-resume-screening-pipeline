@@ -1,81 +1,85 @@
-# AI Resume Screening & Ranking
+# AI Resume Screening
 
-Screen a batch of resumes (about 50 in one run), reject candidates who fail a hard Python + AI rule, score the
-rest out of 100, enrich with public GitHub activity, and produce an explainable ranked JSON shortlist.
+Screens a batch of resumes (about 50 per run): hard-rejects candidates without Python and real AI/LLM work,
+scores the rest out of 100, adds public GitHub activity as a signal, and produces an explainable, ranked JSON shortlist.
 
-> **LLM = witness, Python = judge.** OpenRouter is used only as a document extraction fallback when
-> deterministic PDF text extraction is insufficient. It does not determine eligibility, score, penalty, or ranking.
+> **LLM = witness, Python = judge.** OpenRouter is used only as a document extraction fallback when deterministic
+> PDF text extraction is insufficient. It does not determine eligibility, score, penalty, or ranking.
+
+## Problem
+
+Given resumes, extract candidate information, apply a hard **Python + AI/agentic** eligibility rule, rank only eligible
+candidates with the specified 100-point model, enrich with GitHub, and explain every decision. No database,
+no deployment, no frontend framework and no vector store are needed; the state is the input files and the output JSON.
 
 ## Architecture
 
 ```text
- dir | .pdf | .zip | web upload ──► input normalisation ──► one list of PDFs   (src/ingestion/inputs.py)
-                                          │ SHA-256 duplicate detection, safe ZIP extraction
-                                          ▼
-                      pypdf text ── usable? ── yes ──► rule-based section parser      (src/extraction/deterministic.py)
-                                          └─── no (scanned / garbled) ──► render pages ► OpenRouter vision ► Pydantic
-                                          ▼
-                      evidence grounding (drop anything not found in the resume text)
-                                          ▼
-                      hard eligibility ─► deterministic score ─► GitHub enrichment ─► rank ─► JSON   (src/screening, src/pipeline)
+ directory | .pdf | .zip | web upload ──► input normalisation ──► one list of PDFs        ingestion/inputs.py
+                                              │ SHA-256 duplicate detection, safe ZIP extraction
+                                              ▼
+              pypdf text ── usable? ── yes ──► rule-based section parser                  extraction/deterministic.py
+                                   └─ no (scanned / image-only) ─► render pages ─► OpenRouter vision ─► Pydantic
+                                              ▼
+              evidence grounding (drop anything not found in the resume text)            extraction/grounding.py
+                                              ▼
+              hard eligibility ─► deterministic score ─► GitHub points ─► rank ─► JSON   screening/, pipeline/
 ```
 
 | Module | Responsibility |
 | --- | --- |
 | `models/` | Pydantic contracts only |
-| `ingestion/` | input normalisation, hashing, pypdf, page rendering |
+| `ingestion/` | input normalisation, hashing, pypdf text, page rendering |
 | `extraction/` | text parser, LLM fallback, evidence grounding |
-| `llm/` | OpenRouter adapter (the only place that knows its request format) |
-| `screening/` | eligibility, scoring, penalty, GitHub points. Pure functions, no I/O |
+| `llm/` | OpenRouter adapter (the only code that knows its request format) |
+| `screening/` | eligibility, scoring, penalty, GitHub points, project summary: pure functions, no I/O |
 | `enrichment/` | GitHub API client |
-| `pipeline/` | `run_batch` (the one entry point), ranking, JSON/TXT output, per-candidate error isolation |
-| `web/` | FastAPI route + one HTML page. **A thin wrapper around the same pipeline the CLI uses.** |
+| `pipeline/` | `run_batch`, the single entry point; ranking; JSON/TXT output; per-candidate error isolation |
+| `cli/`, `web/`, `main.py` | thin front ends. **The Web UI is a thin wrapper over the same pipeline the CLI uses.** |
+
+Dependencies point one way: CLI / Web → pipeline → ingestion / extraction / screening / enrichment. Screening never
+imports the LLM, web or CLI code.
 
 ## Supported Inputs
 
-A directory of PDFs (recursive), a single PDF, a ZIP of PDFs (nested folders fine), or any mix. The Web UI accepts
-multiple PDFs, ZIPs, or both. Everything is normalised to one PDF list before the pipeline starts, so the rest of
-the code never knows where a file came from. A PDF present both directly and inside a ZIP is caught as a duplicate (SHA-256).
+* **PDF is required** and is the only resume format. **DOCX/TXT are not supported** (non-PDF files are ignored and listed in `ignored_files`).
+* A directory of PDFs (recursive), a single PDF, a **ZIP** of PDFs (nested folders fine), or any mix. The Web UI accepts
+  multiple PDFs, ZIPs, or both. Everything is normalised to one PDF list first, so the pipeline never knows where a file came from.
+* Duplicates are detected by SHA-256 of the bytes, including a PDF present both directly and inside a ZIP.
+* ZIPs are extracted to a temporary directory (always removed) without `extractall`: `..`, absolute and drive-letter paths are
+  rejected, only `.pdf` entries are written, nested ZIPs are not unpacked, and file counts/sizes are capped (variables below).
 
-ZIPs are extracted to a temporary directory (removed afterwards) without `extractall`: entries with `..`, absolute
-or drive-letter paths are rejected, only `.pdf` entries are written, nested ZIPs are not unpacked, and file count and
-sizes are capped (see below). Non-PDF files are ignored and listed in `ignored_files`.
-
-## CLI Usage
-
-**Interactive (no arguments):** `python main.py` starts a guided workflow: choose the input type (PDF / directory /
-ZIP), the path, and the output (terminal, file, optional TXT); review a configuration summary with OpenRouter / GitHub
-token status; confirm; then see the totals, the full JSON, and an export menu (copy, save JSON, save JSON + TXT). It only
-collects settings and presents results: it calls the same `screen_inputs` as the flag mode, and the JSON shown, copied and
-saved is the exact `results.json` payload. Existing files are never overwritten without confirmation; Ctrl+C cancels cleanly.
-
-**Scriptable (any arguments):** unchanged.
+## CLI
 
 ```bash
+python main.py                          # guided interactive workflow (no arguments)
 python main.py --input ./resumes        --output ./output/results.json     # directory
 python main.py --input ./candidate.pdf  --output ./output/results.json     # single PDF
 python main.py --input ./resumes.zip    --output ./output/results.json --text-output ./output/results.txt
 ```
 
-The JSON is the source of truth. `--text-output` is only a rendering of the same result (`pipeline/report.py`).
+With no arguments, a guided workflow asks for input type, path and output options, shows a configuration summary
+(OpenRouter / GitHub token status), runs the pipeline, prints the JSON and offers export (copy / save JSON / save JSON + TXT).
+It only collects settings and presents results. Any arguments run the scriptable mode. The JSON is the source of
+truth; the TXT (`pipeline/report.py`) is only a rendering of the same result.
 
 ## Web UI
 
-`FastAPI` + one plain HTML page (no build step, no database, nothing stored). Drag & drop or browse PDFs/ZIPs, review
-the file list, click **Run Screening**; see counts, a ranked table with per-candidate details (matched skills, score
-notes, GitHub, concerns), rejected and failed lists, and download the exact backend `results.json`.
-Routes: `GET /`, `POST /api/screen`, `GET /health`. The route only validates and saves uploads, then calls the same
-`run_batch` as the CLI. All page text from resumes is inserted with `textContent` (never as HTML).
+`FastAPI` + one plain HTML page (inline CSS and vanilla JavaScript; no build step, nothing stored). Drag and drop or browse PDFs/ZIPs,
+review the file list, **Run Screening**, then see totals, a compact ranked table (click a row for source file, matched skills,
+project summary, score notes with quoted evidence, GitHub status and concerns), rejected and failed lists, and download the
+exact backend `results.json`. Routes: `GET /`, `POST /api/screen`, `GET /health`. The route only validates and saves uploads and
+calls the same `run_batch` as the CLI. Resume text is rendered with `textContent` (never as HTML).
 
 ## Docker
 
-Docker is the primary way to run this; nothing needs installing on the host. One image, non-root user.
+Docker is the primary way to run this; nothing needs installing on the host. One image, non-root user, no services.
 
 ```bash
 docker build -t ai-resume-screening .
-cp .env.example .env        # optional: OPENROUTER_API_KEY, GITHUB_TOKEN
+cp .env.example .env        # needed for --env-file; keys are optional (see below)
 
-# CLI
+# CLI (PDFs in ./resumes, results in ./output)
 docker run --rm -v "$PWD/resumes:/app/resumes" -v "$PWD/output:/app/output" --env-file .env \
   ai-resume-screening python main.py --input ./resumes --output ./output/results.json
 
@@ -90,121 +94,129 @@ docker run --rm ai-resume-screening pytest
 docker run --rm -it -v "$PWD:/app" -v "$PWD/output:/app/output" --env-file .env ai-resume-screening
 ```
 
-Inside the guided mode, paths are relative to the mounted project directory (e.g. `./resumes.zip`), and results saved
-under `./output` appear on the host. The commands above that pass an explicit `python main.py ...` are non-interactive.
-
-Without Docker (Python 3.10+): `python -m venv .venv && source .venv/bin/activate && pip install -e '.[dev]'`, then the
-`python main.py ...` and `pytest` commands run directly (`uvicorn src.web.app:app --port 8000` for the web UI).
-
-`docker compose run --rm app` runs the CLI with the same mounts (`.env` optional). On Linux hosts make sure
-`./output` is writable by UID 1000. Real-API check for the fallback (skipped without a key):
-`docker run --rm --env-file .env ai-resume-screening python scripts/smoke_openrouter.py`.
+In the guided mode, type paths relative to the project folder (e.g. `./resumes.zip`). `docker compose run --rm app` runs
+the CLI with the same mounts. On Linux hosts make sure `./output` is writable by UID 1000. Without Docker (Python 3.10+):
+`python -m venv .venv && source .venv/bin/activate && pip install -e '.[dev]'`, then the same `python main.py` / `pytest` /
+`uvicorn src.web.app:app` commands.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `OPENROUTER_API_KEY` | none | enables the scanned-PDF fallback |
 | `OPENROUTER_MODEL` | `anthropic/claude-sonnet-4.6` | must support vision + structured outputs |
-| `GITHUB_TOKEN` | none | optional; raises the GitHub rate limit (60/h unauthenticated) |
+| `GITHUB_TOKEN` | none | optional; raises the GitHub limit from 60 to 5000 requests/hour |
 | `GITHUB_RECENT_DAYS` | `90` | window for "recent" GitHub activity |
 | `MAX_FILES` / `MAX_PDF_MB` / `MAX_ZIP_MB` / `MAX_EXTRACTED_MB` | 200 / 20 / 100 / 300 | input limits |
 | `MAX_UPLOAD_FILES` / `MAX_UPLOAD_MB` | 100 / 200 | web request limits |
 
-## Eligibility
+## Eligibility Rules
 
-Deterministic, evaluated before any scoring and independent of GitHub: **Python evidence AND meaningful AI evidence.**
+Deterministic, applied before any scoring, independent of GitHub: **Python evidence AND meaningful AI evidence.**
 
-* Python: listed in skills, or present in any project or job text.
-* AI (LLM, RAG, embeddings, vector search, LangChain/LangGraph/LlamaIndex/ADK, tool calling, agents, evaluation
-  pipelines...) must appear in an *implementation context*: the same clause as a verb like "built"/"implemented", or in
-  the tech list of an entry whose description shows implementation. "AI enthusiast", "familiar with ChatGPT" or a
-  skills-list entry do not count.
-* Other languages never disqualify. Ineligible candidates get explicit reasons, **no score, no rank, no GitHub call**.
+* Python: in the skills list, or in any project or job text.
+* AI (LLM, RAG, embeddings, vector search, LangChain/LangGraph/LlamaIndex/ADK, tool calling, agents, evaluation pipelines...) must appear in an
+  *implementation context*: the same clause as a verb such as "built" / "implemented" / "leverages", or in the tech list of an entry whose
+  description shows implementation. "AI enthusiast", "familiar with ChatGPT", "used GPT for productivity" or a skills-list entry do not count.
+* Other languages never disqualify. Ineligible candidates get explicit reasons and **no score, no rank and no GitHub call**.
 
-## Scoring
+## Scoring Model
 
-A signal worth N points earns N when it appears in a project/job entry that also contains an implementation verb, N/2 as
-a bare mention, and 0 from the skills list alone (Python alone: 3). Each piece of evidence is paid in one category only.
+A signal worth N points earns N when it appears in a project/job entry that also contains an implementation verb, N/2 as a bare mention,
+and 0 from the skills list alone (Python alone: 3). One piece of evidence is paid in one category only. Every awarded point is a note naming the
+entry and quoting the resume text that earned it, e.g. `+10 LLM (implementation) | Project: Adaptive Agentic RAG | "...combining Groq Llama 3.3 for..."`.
 
 | Category | Components |
 | --- | --- |
-| AI / Agentic / RAG (40) | LLM 10, RAG/embeddings/vector 6, tools/agents 6, orchestration 6 (framework name alone: 3), evaluation 5, data/business logic 7 |
+| AI / Agentic / RAG (40) | LLM 10, RAG/embeddings/vector 6, tools/agents 6, orchestration 6 (a framework name alone: 3), evaluation 5, data/business logic 7 |
 | Python & Backend (30) | Python 12, backend framework/API 8, async/concurrency 4, database 6 |
-| Cloud / Deployment / Full Stack (15) | cloud 5, Docker/Kubernetes 5, React/Next.js/full-stack 5 |
-| GitHub (10) | recent activity 0-5 + relevant repositories 0-5 (see below) |
+| Cloud / Deployment / Full Stack (15) | named cloud platform 5, Docker/Kubernetes 5, React/Next.js/full-stack app 5 |
+| GitHub (10) | recent activity 0-5 + relevant repositories 0-5 (below) |
 | Engineering Depth (5) | 1 each: testing, modularity, reliability, caching/queues, observability |
 
 **Thin-AI-project penalty**, once per candidate and judged on the *strongest* AI project (a weak side project never adds to it):
 
 | Strongest AI project | Penalty |
 | --- | ---: |
-| bare LLM/API call, no retrieval, tools, workflow, evaluation, data or backend logic | 15 |
+| bare LLM/API call: no retrieval, tools, workflow, evaluation, data or backend logic | 15 |
 | exactly one such signal | 10 |
 | two or more, but tutorial-like, no implementation verb, or a very short description | 5 |
 | genuine implementation | 0 |
 
 `total = clamp(sum(categories) - penalty, 0, 100)`. Ranking: total, then AI score, then Python score, then file name.
-Every awarded point is listed in `score.notes`.
+The keyword signals are deliberately simple and were audited against the real dataset (see `tests/test_signal_precision.py`).
 
 ## LLM Usage
 
-**OpenRouter is used only as a document extraction fallback when deterministic PDF text extraction is insufficient.
-It does not determine eligibility, score, penalty, or ranking.**
+Digital PDFs never touch the LLM: pypdf text (re-read with PyMuPDF if pypdf emits one word per line) goes to a rule-based parser.
+The fallback runs **only** when the text is empty, too short or garbled, i.e. scanned/image-only PDFs. A readable PDF whose layout
+the parser cannot follow is reported as `failed` (`unparseable_layout`); it is never sent to the LLM.
 
-Digital PDFs never touch the LLM: pypdf text (re-read with PyMuPDF if pypdf returns one word per line, a quirk seen in real PDFs) goes to a rule-based parser. The fallback runs only when pypdf text is empty,
-too short, or garbled (scanned / image-only PDFs). An unfamiliar layout in a *readable* PDF does **not** trigger it: that
-candidate is reported as `failed` ("unrecognised layout"), a visible parser limitation.
-
-For the fallback, pages are rendered locally with PyMuPDF (max 4, JPEG) and sent to `/api/v1/chat/completions` with a strict
-JSON Schema generated from the `ResumeExtraction` Pydantic model. The model is only asked *what the resume says*:
-a transcription plus projects, experience and skills with verbatim evidence snippets. The schema has no eligibility, score,
-rank or opinion fields (extras are dropped). Output is validated by Pydantic (one retry on invalid output), then every
-skill/project/job/URL is checked against the transcribed text (case/whitespace/punctuation-insensitive); unsupported items
-are discarded.
+For the fallback, pages are rendered locally with PyMuPDF (max 4, JPEG) and sent to OpenRouter's `/api/v1/chat/completions` with a strict
+JSON Schema generated from the `ResumeExtraction` Pydantic model. The model is asked only *what the resume says*: a transcription plus
+projects, experience and skills with verbatim evidence. The schema has no eligibility, score, rank or opinion fields (extras are dropped).
+Output is validated by Pydantic (one retry on invalid output); every skill/project/job/URL is then checked against the transcribed text and
+unsupported items are discarded. The result enters the same deterministic code as text-extracted resumes.
 
 ## GitHub Enrichment
 
-Only eligible candidates are enriched, via one public-API call per user (`/users/{u}/repos`, first 100 repos), cached for
-the run. The URL comes from the resume text, or from a PDF hyperlink when the visible text just says "GitHub".
+An additional signal, **never an eligibility requirement**. Only eligible candidates are enriched: one public-API call per user
+(`/users/{u}/repos`, first 100 repos), cached for the run. The URL comes from the resume text or from a PDF hyperlink.
 
 * Recent activity (0-5): own, non-fork, non-archived, non-empty repos pushed within `GITHUB_RECENT_DAYS`: 1 -> 2, 2 -> 3, 3 -> 4, 4+ -> 5.
-* Relevant repositories (0-5): Python repos (max 2) + AI/LLM/agent/RAG repos (max 2) + 1 if one of those was pushed in the last year.
-* Stars are recorded but never scored.
-
-Unauthenticated GitHub allows 60 requests/hour, roughly one 50-resume run, so set `GITHUB_TOKEN` for repeated runs.
-Missing profile, 404/private, rate limit, timeout and network errors produce a status (`not_provided`, `not_found`,
-`rate_limited`, `error`), 0 GitHub points and a concern; the candidate is still ranked.
+* Relevant repositories (0-5): Python repos (max 2) + AI/LLM/agent repos (max 2) + 1 if one of those was pushed in the last year. Stars are never scored.
+* Missing profile, 404/private, rate limit, timeout or network error gives a status, 0 GitHub points and a recorded concern. The candidate is still ranked.
 
 ## Failure Handling
 
-Every failure is isolated to one candidate or file; the run always finishes and writes the JSON.
+Every failure is isolated to one file or candidate; the run always finishes and writes the JSON. Failed results carry a clean `error` message and a
+machine-readable `error_code`; technical detail goes to the log, never into the output or UI.
 
-| Situation | Result |
+| Situation | `error_code` / result |
 | --- | --- |
-| unreadable PDF, corrupt ZIP, unsafe ZIP entry, oversize file | `failed` with a safe message |
-| duplicate file (same SHA-256) | skipped, counted in `duplicates_skipped` |
-| non-PDF file | ignored, listed in `ignored_files` |
-| scanned PDF and no API key | `failed`: "...set OPENROUTER_API_KEY" |
-| LLM timeout / HTTP error / 429 | `failed`, not retried |
-| LLM invalid JSON or schema mismatch | one retry with the error, then `failed` |
-| readable PDF, unrecognised layout | `failed` (no LLM call) |
-| no Python or no AI implementation evidence | `rejected` with reasons; no score or rank |
+| unreadable or corrupt PDF | `unreadable_pdf` |
+| corrupt ZIP, unsafe ZIP entry, oversize file, too many files | `corrupt_zip`, `unsafe_zip_entry`, `file_too_large`, `too_many_files` |
+| readable PDF, layout not parseable | `unparseable_layout` (no LLM call) |
+| scanned PDF and no API key | `llm_not_configured` |
+| LLM timeout / HTTP error / 429 (not retried) | `llm_call_failed` |
+| LLM invalid output after one retry | `llm_invalid_output` |
+| unexpected bug | `internal_error` (generic message) |
+| duplicate file | skipped, counted in `duplicates_skipped` |
+| no Python or no AI implementation evidence | `rejected` with reasons, no score or rank |
 | GitHub problem | candidate keeps their score without GitHub points |
-
-Fails closed: unsupported claims are discarded, never guessed. API keys are read from the environment only and never
-logged or written to output; web errors never include stack traces.
 
 ## Design Decisions
 
-* Hard rules and arithmetic live in plain Python (`src/screening`); the LLM only turns pixels into text and structure.
-* Keyword/clause signals are crude but explainable: every point traces to a note, and tests pin the behaviour.
-* One `run_batch` for CLI and web, so there is one place where results are produced.
-* No database, queue, vector store or frontend build; state is the input files and the output JSON.
-* Sequential processing: simple and predictable at ~50 resumes (LLM calls only for scanned files).
+1. **Deterministic eligibility, outside the LLM.** It is the hard filter; it must be reproducible, auditable and immune to prompt injection or a
+   persuasive-sounding resume. A model call can vary run to run; a regex over extracted facts cannot.
+2. **Deterministic scoring.** The same extracted resume always yields the same score, and each point links to quoted evidence, so a reviewer can
+   check or dispute any number. Ranking then depends only on those scores.
+3. **LLM only when PDF text extraction is insufficient.** Most resumes have a text layer, so an LLM adds cost, latency and nondeterminism for no gain.
+   Where it is needed (scanned pages), it acts as OCR and returns facts only.
+4. **Fail closed.** Unsupported claims are discarded rather than guessed, and an unparseable resume is reported as failed instead of being scored
+   from a partial read. A wrong shortlist entry is worse than a visible gap.
+5. **GitHub failures never reject a candidate.** GitHub is a bonus signal and an external, rate-limited service; resume quality must not
+   depend on an API being up or on a profile being linked.
+6. **No unnecessary infrastructure.** No database, queue, vector store, auth or frontend build: ~50 resumes run sequentially in seconds to a minute, and
+   the input files plus one JSON output are the whole state.
 
 ## If I Had More Time
 
-1. Calibrate keyword signals and the layout parser on a larger real resume set (multi-column layouts parse poorly).
-2. Bounded concurrency for LLM/GitHub calls, with measurements.
-3. Use GitHub's events or commit APIs for real activity instead of `pushed_at`, and page beyond 100 repos.
-4. Independent grounding for LLM output (compare against partial pypdf text) and OCR-quality checks.
-5. DOCX/TXT inputs, a persisted run history, and a TXT download in the web UI.
+1. Calibrate the keyword signals and the text parser on a larger labelled resume set; multi-column PDFs (reading order scrambled) currently fail visibly.
+2. Bounded concurrency for GitHub and LLM calls, with measurements.
+3. Real commit activity from GitHub's events API instead of `pushed_at`, and pagination beyond 100 repos.
+4. An independent check for LLM-extracted text (compare against any partial pypdf text).
+
+## Testing
+
+```bash
+docker run --rm ai-resume-screening pytest
+```
+
+Offline and deterministic: no API key or network is needed (the LLM, OpenRouter HTTP and GitHub are faked or mocked). Coverage: eligibility
+including false positives, scoring and the penalty ladder, no double-counting, evidence notes, signal precision, determinism, ingestion
+(duplicates, malformed/scanned PDFs), input normalisation (zip-slip, limits), the text parser, OpenRouter adapter and LLM extraction
+(retry, timeout, 429, grounding), GitHub enrichment, failure messages, the web API and the interactive CLI.
+
+Verified outside the test suite on the supplied 50-resume dataset (50 files: 34 ranked, 14 rejected, 2 failed): counts reconcile, no leaked
+text/secrets/paths, rejected/failed carry no score or rank, and the Web UI was driven end to end against the Docker image. **Not verified in
+this environment:** the live OpenRouter call (no API key available) and authenticated GitHub access (no token); `scripts/smoke_openrouter.py` runs
+the live check once a key is set.

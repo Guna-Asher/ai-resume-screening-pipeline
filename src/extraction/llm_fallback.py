@@ -4,6 +4,7 @@ The LLM is an untrusted document-processing component: it reports what the resum
 It is never asked to judge, score, classify or recommend anyone.
 """
 import json
+import logging
 import re
 
 from pydantic import ValidationError
@@ -12,6 +13,7 @@ from src.ingestion import IMAGE_MIME, MAX_PAGES, render_pages
 from src.llm import ImagePart, JSONVisionClient, LLMError, strict_json_schema
 from src.models import ExtractedResume, IngestedDocument, ResumeExtraction
 
+logger = logging.getLogger(__name__)
 SCHEMA_NAME = "resume_extraction"
 MIN_RAW_TEXT_CHARS = 100
 
@@ -45,7 +47,11 @@ RETRY_NOTE = ("\n\nYour previous answer was rejected: {error}\n"
 
 
 class ExtractionError(Exception):
-    """Candidate-level extraction failure (message is safe to put in the output)."""
+    """Candidate-level extraction failure. `message` is safe to show users; `code` is machine-readable."""
+
+    def __init__(self, code: str, message: str):
+        super().__init__(message)
+        self.code = code
 
 
 def _parse(content: str) -> ResumeExtraction:
@@ -72,13 +78,16 @@ def extract_with_llm(doc: IngestedDocument, llm: JSONVisionClient | None,
     Transport problems (timeout, HTTP 4xx/5xx, rate limit) are NOT retried: they fail this candidate.
     """
     if llm is None:
-        raise ExtractionError("fallback extraction needed but no LLM is configured (set OPENROUTER_API_KEY)")
+        raise ExtractionError("llm_not_configured",
+                              "This PDF has no readable text layer (scanned or image-only) and the OCR fallback is not "
+                              "configured. Set OPENROUTER_API_KEY to enable it.")
     if not doc.path:
-        raise ExtractionError("fallback extraction needed but the PDF path is unknown")
+        raise ExtractionError("internal_error", "The PDF could not be re-opened for the OCR fallback.")
     try:
         images = [ImagePart(IMAGE_MIME, data) for data in render_pages(doc.path, max_pages)]
-    except (RuntimeError, ValueError, OSError) as e:   # PyMuPDF raises RuntimeError subclasses for bad PDFs
-        raise ExtractionError(f"could not render PDF pages: {type(e).__name__}: {e}") from None
+    except (RuntimeError, ValueError, OSError):   # PyMuPDF raises RuntimeError subclasses for bad PDFs
+        logger.debug("page rendering failed for %s", doc.source_file, exc_info=True)
+        raise ExtractionError("render_failed", "The PDF pages could not be rendered for the OCR fallback.") from None
 
     schema = strict_json_schema(ResumeExtraction)
     user_text = USER_PROMPT.format(n=len(images))
@@ -89,7 +98,7 @@ def extract_with_llm(doc: IngestedDocument, llm: JSONVisionClient | None,
             content = llm.complete_json(system=SYSTEM_PROMPT, user_text=prompt, images=images,
                                         schema_name=SCHEMA_NAME, schema=schema)
         except LLMError as e:
-            raise ExtractionError(f"LLM call failed: {e}") from None
+            raise ExtractionError("llm_call_failed", f"The OCR fallback request failed: {e}") from None
         try:
             extraction = _parse(content)
         except (ValueError, ValidationError) as e:  # JSONDecodeError is a ValueError
@@ -97,4 +106,5 @@ def extract_with_llm(doc: IngestedDocument, llm: JSONVisionClient | None,
             continue
         return ExtractedResume(**extraction.model_dump(), source_file=doc.source_file,
                                extraction_method="llm_vision")
-    raise ExtractionError(f"LLM returned invalid structured output twice: {last_error}")
+    raise ExtractionError("llm_invalid_output",
+                          f"The OCR fallback returned invalid structured output twice ({last_error}).")

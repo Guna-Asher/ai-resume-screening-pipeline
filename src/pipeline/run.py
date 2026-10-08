@@ -1,4 +1,5 @@
 """One entry point for CLI and web: sources -> ingest -> extract -> ground -> screen -> rank."""
+import logging
 import tempfile
 import time
 from collections.abc import Callable, Sequence
@@ -10,8 +11,9 @@ from src.ingestion import InputLimits, collect_inputs, ingest_paths
 from src.llm import OpenRouterClient
 from src.models import BatchSummary, ExtractedResume, IngestedDocument, IngestionStatus
 
-from .batch import Enricher, failed_result, failures_from_ingestion, rank, safe_screen, summarize
+from .batch import INTERNAL_MESSAGE, Enricher, failed_result, failures_from_ingestion, rank, safe_screen, summarize
 
+logger = logging.getLogger(__name__)
 Extractor = Callable[[IngestedDocument], ExtractedResume]
 
 
@@ -26,16 +28,19 @@ def run_batch(sources: Path | Sequence[Path], extractor: Extractor, enricher: En
     with tempfile.TemporaryDirectory(prefix="screening-") as workdir:
         collected = collect_inputs(sources, Path(workdir), limits)
         docs = ingest_paths(collected.pdfs)
-        results = [failed_result(p.name, p.message) for p in collected.problems]
+        results = [failed_result(p.name, p.message, p.code) for p in collected.problems]
         results += failures_from_ingestion(docs)
         for doc in docs:
             if doc.status not in (IngestionStatus.OK, IngestionStatus.NEEDS_FALLBACK):
                 continue
             try:
                 resume = ground_resume(extractor(doc))
-            except Exception as e:  # extraction failure is candidate-level
-                msg = str(e) if isinstance(e, ExtractionError) else f"{type(e).__name__}: {e}"
-                results.append(failed_result(doc.source_file, f"extraction failed: {msg}"))
+            except ExtractionError as e:   # expected, user-explainable
+                results.append(failed_result(doc.source_file, str(e), e.code))
+                continue
+            except Exception:   # extraction failure is candidate-level; cause goes to the log, not the output
+                logger.warning("unexpected error while extracting %s", doc.source_file, exc_info=True)
+                results.append(failed_result(doc.source_file, INTERNAL_MESSAGE))
                 continue
             results.append(safe_screen(resume, enricher))
     duplicates = sum(d.status is IngestionStatus.DUPLICATE for d in docs)

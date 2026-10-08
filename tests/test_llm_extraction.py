@@ -73,7 +73,7 @@ def test_decision_fields_returned_by_the_model_are_dropped(scanned_doc):
 
 def test_transport_failures_are_not_retried(scanned_doc):
     llm = FakeLLM(timeout_error())
-    with pytest.raises(ExtractionError, match="LLM call failed.*timed out"):
+    with pytest.raises(ExtractionError, match="OCR fallback request failed.*timed out"):
         extract_with_llm(scanned_doc, llm)
     assert len(llm.calls) == 1
 

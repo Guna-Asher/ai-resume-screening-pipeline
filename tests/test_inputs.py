@@ -64,7 +64,7 @@ def test_malformed_zip_fails_only_itself(tmp_path):
     s = run(tmp_path)
     got = names(s)
     assert got["a.pdf"].status is ScreeningStatus.RANKED
-    assert got["bad.zip"].status is ScreeningStatus.FAILED and "corrupt ZIP" in got["bad.zip"].error
+    assert got["bad.zip"].status is ScreeningStatus.FAILED and got["bad.zip"].error_code == "corrupt_zip" and "corrupt" in got["bad.zip"].error
     assert s.total_files == 2
 
 
@@ -85,7 +85,7 @@ def test_limits_are_enforced(tmp_path):
     make_zip(tmp_path / "z.zip", {f"{i}.pdf": data + bytes([i]) for i in range(5)})
     with tempfile.TemporaryDirectory() as w:
         got = collect_inputs(tmp_path / "z.zip", Path(w), InputLimits(max_files=3))
-    assert len(got.pdfs) == 3 and any("more than 3 PDFs" in p.message for p in got.problems)
+    assert len(got.pdfs) == 3 and any(p.code == "too_many_files" for p in got.problems)
 
     with tempfile.TemporaryDirectory() as w:
         got = collect_inputs(tmp_path / "z.zip", Path(w), InputLimits(max_file_bytes=100))
@@ -93,7 +93,7 @@ def test_limits_are_enforced(tmp_path):
 
     with tempfile.TemporaryDirectory() as w:
         got = collect_inputs(tmp_path / "z.zip", Path(w), InputLimits(max_archive_bytes=10))
-    assert got.pdfs == [] and "ZIP larger" in got.problems[0].message
+    assert got.pdfs == [] and got.problems[0].code == "zip_too_large"
 
 
 def test_limits_from_env():

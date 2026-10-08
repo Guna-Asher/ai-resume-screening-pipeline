@@ -74,7 +74,8 @@ def _ingest_one(item: PdfInput, seen: dict[str, str]) -> IngestedDocument:
     try:
         data = path.read_bytes()
     except OSError as e:
-        return IngestedDocument(source_file=name, status=IngestionStatus.ERROR, error=f"read failed: {e}")
+        return IngestedDocument(source_file=name, status=IngestionStatus.ERROR, error=f"read failed: {e}",
+                                error_code="file_unreadable")
 
     digest = hashlib.sha256(data).hexdigest()
     if digest in seen:
@@ -86,7 +87,8 @@ def _ingest_one(item: PdfInput, seen: dict[str, str]) -> IngestedDocument:
         text, pages, links = _extract_text(data)
     except Exception as e:  # pypdf raises many types for malformed input
         return IngestedDocument(source_file=name, status=IngestionStatus.ERROR,
-                                content_hash=digest, error=f"unreadable PDF: {type(e).__name__}: {e}")
+                                content_hash=digest, error=f"unreadable PDF: {type(e).__name__}: {e}",
+                                error_code="unreadable_pdf")
 
     status = IngestionStatus.OK if is_usable_text(text) else IngestionStatus.NEEDS_FALLBACK
     if links and status is IngestionStatus.OK and not _GITHUB_URI.search(text):

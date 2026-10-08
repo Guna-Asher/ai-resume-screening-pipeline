@@ -42,6 +42,9 @@
   tr.detail td { background:var(--bg); } tr.detail h4 { margin:10px 0 2px; font-size:13px; color:var(--muted); }
   tr.detail ul { margin:0; padding-left:18px; }
   .scroll { overflow-x:auto; }
+  .pre { white-space:pre-line; }
+  .src { color:var(--muted); } .quote { color:var(--muted); font-style:italic; overflow-wrap:anywhere; }
+  tr.detail li { margin-bottom:4px; }
   .reasons li { color:var(--bad); } .concern { color:var(--warn); }
   body[data-state="IDLE"] .only-files, body[data-state="IDLE"] #processing, body[data-state="IDLE"] #results, body[data-state="IDLE"] #error,
   body[data-state="FILES_SELECTED"] #processing, body[data-state="FILES_SELECTED"] #results, body[data-state="FILES_SELECTED"] #error,
@@ -150,6 +153,18 @@
   function showError(msg) { $("errmsg").textContent = msg; setState("ERROR"); }
 
   const fmt = (n) => Number.isInteger(n) ? String(n) : n.toFixed(1);
+  // Score notes arrive as "+10 LLM (implementation) | Project: X | "quote"": show the point line, its source, its quote.
+  function noteList(notes) {
+    const ul = el("ul");
+    notes.forEach((n) => {
+      const [head, source, quote] = n.split(" | ");
+      const li = el("li"); li.append(el("strong", head));
+      if (source) li.append(el("span", "  -  " + source, "src"));
+      if (quote) li.append(el("div", quote, "quote"));
+      ul.append(li);
+    });
+    return ul;
+  }
   function list(items, cls) { const ul = el("ul", undefined, cls); items.forEach((t) => ul.append(el("li", t))); return ul; }
   function section(title, content) { const d = el("div"); d.append(el("h4", title), content); return d; }
 
@@ -179,8 +194,8 @@
       const td = el("td"); td.colSpan = 8;
       td.append(section("Source file", el("div", r.source_file)),
                 section("Matched skills", el("div", (r.eligibility.matched_signals || []).join(", ") || "-")),
-                section("Project summary", el("div", r.project_summary || "-")),
-                section("Score notes" + (sc.penalty ? " (penalty -" + fmt(sc.penalty) + ")" : ""), list(sc.notes)),
+                section("Project summary", el("div", r.project_summary || "No project evidence extracted.", "pre")),
+                section("Score notes" + (sc.penalty ? " (penalty -" + fmt(sc.penalty) + ")" : ""), noteList(sc.notes)),
                 section("GitHub", el("div", githubSummary(r.github))));
       if (r.concerns.length) td.append(section("Concerns", list(r.concerns, "concern")));
       detail.append(td);
