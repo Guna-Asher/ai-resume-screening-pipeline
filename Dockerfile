@@ -19,4 +19,4 @@ USER app
 
 EXPOSE 8000
 # Secrets come from --env-file / the environment at run time, never from the image.
-CMD ["python", "main.py", "--help"]
+CMD ["python", "main.py"]

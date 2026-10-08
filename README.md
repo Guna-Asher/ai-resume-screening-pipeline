@@ -43,6 +43,14 @@ sizes are capped (see below). Non-PDF files are ignored and listed in `ignored_f
 
 ## CLI Usage
 
+**Interactive (no arguments):** `python main.py` starts a guided workflow: choose the input type (PDF / directory /
+ZIP), the path, and the output (terminal, file, optional TXT); review a configuration summary with OpenRouter / GitHub
+token status; confirm; then see the totals, the full JSON, and an export menu (copy, save JSON, save JSON + TXT). It only
+collects settings and presents results: it calls the same `screen_inputs` as the flag mode, and the JSON shown, copied and
+saved is the exact `results.json` payload. Existing files are never overwritten without confirmation; Ctrl+C cancels cleanly.
+
+**Scriptable (any arguments):** unchanged.
+
 ```bash
 python main.py --input ./resumes        --output ./output/results.json     # directory
 python main.py --input ./candidate.pdf  --output ./output/results.json     # single PDF
@@ -77,7 +85,13 @@ docker run --rm -p 8000:8000 --env-file .env \
 
 # Tests
 docker run --rm ai-resume-screening pytest
+
+# Interactive guided mode (-it is required for terminal input)
+docker run --rm -it -v "$PWD:/app" -v "$PWD/output:/app/output" --env-file .env ai-resume-screening
 ```
+
+Inside the guided mode, paths are relative to the mounted project directory (e.g. `./resumes.zip`), and results saved
+under `./output` appear on the host. The commands above that pass an explicit `python main.py ...` are non-interactive.
 
 `docker compose run --rm app` runs the CLI with the same mounts (`.env` optional). On Linux hosts make sure
 `./output` is writable by UID 1000. Real-API check for the fallback (skipped without a key):
