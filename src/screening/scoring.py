@@ -10,14 +10,14 @@ Final = sum(categories) - thin-AI-project penalty, clamped to 0..100.
 """
 from src.models import ExtractedResume, ScoreBreakdown
 
-from .signals import MEANINGFUL, Document, build_documents, python_in_skills
+from .signals import MEANINGFUL, THIN_DESCRIPTION_WORDS, Document, build_documents, python_in_skills
 
-PYTHON_SKILLS_ONLY = 3.0
+PYTHON_SKILLS_ONLY = 3.0  # < half of the 12 Python points: a skills list is not implementation
 
 # (signal, points) per category. Caps: AI 40, Python/backend 30, cloud 15, engineering 5.
 AI_COMPONENTS = [("llm", 10), ("rag", 6), ("tools", 6), ("orch_generic", 6), ("eval", 5), ("data", 7)]
 FRAMEWORK_ONLY_ORCH = 3  # naming LangChain/LangGraph/etc. earns at most half the orchestration points
-BACKEND_COMPONENTS = [("python", 10), ("backend", 7), ("async", 4), ("database", 5), ("backend_extra", 4)]
+BACKEND_COMPONENTS = [("python", 12), ("backend", 8), ("async", 4), ("database", 6)]
 CLOUD_COMPONENTS = [("cloud", 5), ("docker", 5), ("frontend", 5)]
 ENGINEERING_COMPONENTS = [("testing", 1), ("modular", 1), ("reliability", 1), ("cache_queue", 1),
                           ("observability", 1)]
@@ -84,13 +84,15 @@ def thin_ai_penalty(docs: list[Document], notes: list[str]) -> float:
     ai_docs = [d for d in docs if d.is_ai]
     if not ai_docs:
         return 0.0
-    best = max(ai_docs, key=lambda d: (len(d.signals & MEANINGFUL), d.has_implementation))
+    # Strongest project wins; a weaker secondary AI project can never raise the penalty.
+    best = max(ai_docs, key=lambda d: (len(d.signals & MEANINGFUL), d.has_implementation,
+                                       not d.is_tutorial_like, d.description_words))
     n = len(best.signals & MEANINGFUL)
     if n == 0:
         penalty, why = 15.0, "only a bare LLM/API call"
     elif n == 1:
         penalty, why = 10.0, "only one meaningful signal beyond the LLM call"
-    elif not best.has_implementation or best.is_tutorial_like or best.description_words < 12:
+    elif not best.has_implementation or best.is_tutorial_like or best.description_words < THIN_DESCRIPTION_WORDS:
         penalty, why = 5.0, "weak implementation detail or tutorial-like"
     else:
         return 0.0

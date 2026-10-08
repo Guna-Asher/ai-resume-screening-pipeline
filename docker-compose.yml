@@ -1,0 +1,11 @@
+services:
+  app:
+    build: .
+    image: ai-resume-screening
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - ./resumes:/app/resumes
+      - ./output:/app/output
+    command: python main.py --input ./resumes --output ./output/results.json

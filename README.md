@@ -59,7 +59,36 @@ Eligible candidates are scored out of 100:
 | GitHub Activity                  |     10 |
 | Engineering Depth                |      5 |
 
-The final score is calculated deterministically from validated evidence.
+The final score is calculated deterministically from validated evidence (`src/screening/`).
+
+**Credit rule.** A signal worth N points earns N when it appears in a project or job entry that also
+contains an implementation verb (built, implemented, deployed...), N/2 as a bare mention, and 0 if it
+only appears in the skills list (Python alone earns 3). Each piece of evidence is paid in one category only.
+
+| Category | Components |
+| --- | --- |
+| AI / Agentic / RAG (40) | LLM 10, RAG/embeddings/vector 6, tools/agents 6, orchestration 6 (framework name alone: 3), evaluation 5, data/business logic 7 |
+| Python & Backend (30) | Python 12, backend framework/API 8, async/concurrency 4, database (Postgres/Redis/...) 6 |
+| Cloud / Deployment / Full Stack (15) | cloud 5, Docker/Kubernetes 5, React/Next.js/full-stack 5 |
+| GitHub (10) | 0 until enrichment is implemented |
+| Engineering Depth (5) | 1 each: testing, modularity, reliability, caching/queues, observability |
+
+**Thin-AI-project penalty** (once per candidate, judged on the *strongest* AI project, so a weak side
+project never adds to it). "Meaningful signals" = RAG, tools/agents, workflow orchestration, evaluation,
+data processing, backend, database.
+
+| Strongest AI project | Penalty |
+| --- | ---: |
+| bare LLM/API call, 0 meaningful signals | 15 |
+| exactly 1 meaningful signal | 10 |
+| 2+ signals but tutorial-like, no implementation verb, or very short description | 5 |
+| genuine implementation | 0 |
+
+`total = max(0, min(100, sum(categories) - penalty))`.
+
+**AI eligibility** needs an AI term (LLM, RAG, agents, embeddings, LangChain/LangGraph, tool calling...)
+in an *implementation context*: the same clause as a verb like "built", or in the tech list of an entry
+whose description shows implementation. "AI enthusiast", "familiar with ChatGPT" or a skills-list entry do not count.
 
 ## LLM Usage
 
@@ -88,11 +117,44 @@ Examples:
 
 The system fails closed rather than inventing unsupported results.
 
-## Running
+## Running with Docker
+
+Docker is the primary way to run this project; nothing needs to be installed on the host.
 
 ```bash
-python main.py --input ./resumes --output ./output/results.json
+docker build -t ai-resume-screening .
+
+# put PDFs in ./resumes, then:
+docker run --rm \
+  -v "$PWD/resumes:/app/resumes" \
+  -v "$PWD/output:/app/output" \
+  ai-resume-screening \
+  python main.py --input ./resumes --output ./output/results.json
 ```
+
+Add `--env-file .env` once LLM/GitHub stages need credentials (copy `.env.example` to `.env`).
+
+Or with Compose (one service, same mounts, `.env` optional):
+
+```bash
+docker compose run --rm app
+```
+
+Results appear in `./output/results.json`. Tests run in the container too:
+
+```bash
+docker run --rm ai-resume-screening pytest
+# or: docker compose run --rm app pytest
+```
+
+The container runs as UID 1000; on Linux hosts make sure `./output` is writable by that user.
+
+Optional local run (Python 3.10+): `python -m venv .venv && .venv/bin/pip install pydantic pypdf httpx pytest`,
+then `.venv/bin/pytest`. `.venv` is git-ignored.
+
+> **Status:** ingestion, eligibility and scoring are implemented and tested. LLM extraction and GitHub
+> enrichment are not yet implemented, so the CLI currently reports every readable PDF as `failed`
+> ("LLM extraction is not implemented yet"); unreadable and duplicate PDFs are already handled.
 
 ## Environment
 
@@ -118,13 +180,12 @@ A batch summary is also included.
 
 ## Tests
 
-Run:
-
 ```bash
-pytest
+docker run --rm ai-resume-screening pytest
 ```
 
-Tests focus on the most important screening behavior, including eligibility, scoring, malformed input, model failures, and batch resilience.
+Tests cover eligibility (including AI false positives), deterministic scoring, the penalty ladder,
+no double-counting across categories, determinism, duplicate and malformed PDFs, and batch resilience.
 
 ## Design Decisions
 

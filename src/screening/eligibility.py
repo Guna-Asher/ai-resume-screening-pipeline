@@ -9,17 +9,19 @@ def check_eligibility(resume: ExtractedResume) -> EligibilityResult:
 
     python_ok = python_in_skills(resume) or any("python" in d.signals for d in docs)
 
-    ai_signals = sorted({s for d in docs for s in d.signals & ELIGIBILITY_AI})
+    ai_signals = sorted({s for d in docs for s in d.ai_evidence})
     ai_ok = bool(ai_signals)
 
     reasons: list[str] = []
     if not python_ok:
         reasons.append("No Python evidence in skills, projects or experience")
     if not ai_ok:
-        skills_only = any(SIGNALS[s].search(skill) for skill in resume.skills for s in ELIGIBILITY_AI)
+        mentioned = any(d.signals & ELIGIBILITY_AI for d in docs) or any(
+            SIGNALS[s].search(skill) for skill in resume.skills for s in ELIGIBILITY_AI)
         reasons.append(
-            "AI/LLM terms appear only in the skills list, not in any project or job"
-            if skills_only else
+            "AI terms are mentioned but never in an implementation context "
+            "(skills list, interests, or 'familiar with' style mentions)"
+            if mentioned else
             "No LLM / RAG / agentic / AI-framework evidence in any project or job")
 
     return EligibilityResult(

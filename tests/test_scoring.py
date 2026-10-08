@@ -15,8 +15,8 @@ def test_ai_score_is_deterministic():
 
 
 def test_python_backend_score():
-    # python10 + backend(FastAPI)7 + database(PostgreSQL)5 = 22 (no async / extras)
-    assert full().python_backend == 22
+    # python12 + backend(FastAPI)8 + database(PostgreSQL)6 = 26 (no async evidence)
+    assert full().python_backend == 26
 
 
 def test_cloud_fullstack_score():
@@ -29,13 +29,13 @@ def test_engineering_and_github_and_total():
     assert s.engineering_depth == 3          # pytest, retry, logging
     assert s.github_activity == 0
     assert s.penalty == 0
-    assert s.total == 40 + 22 + 15 + 3
+    assert s.total == 40 + 26 + 15 + 3
 
 
 def test_skills_list_alone_gets_little_credit():
     s = score_resume(make_resume(skills=["Python", "FastAPI", "Docker", "AWS", "PostgreSQL"],
                                  projects=[WRAPPER_PROJECT]))
-    assert s.python_backend == 10   # python in project w/ verb; FastAPI etc. only in skills -> 0
+    assert s.python_backend == 12   # python in project w/ verb; FastAPI etc. only in skills -> 0
     assert s.cloud_fullstack == 0
 
 
@@ -69,3 +69,59 @@ def test_penalty_applied_once_and_total_clamped():
     assert ScoreBreakdown(penalty=15).total == 0
     assert ScoreBreakdown(ai_project_depth=40, python_backend=30, cloud_fullstack=15,
                           github_activity=10, engineering_depth=5).total == 100
+
+
+# --- thin-AI-project penalty: A/B/C/D ----------------------------------------------------------
+def _p(name, desc, tech=("Python",)):
+    return ExtractedProject(name=name, description=desc, technologies=list(tech))
+
+
+GENUINE = _p("Doc Agent", "Built a RAG agent in Python with FAISS embeddings and OpenAI function calling, "
+             "parsing PDF files behind a FastAPI service with PostgreSQL storage")
+TUTORIAL = _p("Course RAG", "Built a RAG agent following a Udemy tutorial using embeddings, FAISS and OpenAI "
+              "function calling, parsing PDF files into a searchable store")
+
+
+def test_penalty_ladder_A_B_C_D():
+    assert score_resume(make_resume(projects=[WRAPPER_PROJECT])).penalty == 15                     # A
+    one_signal = _p("QA", "Built a document Q&A tool with embeddings and the OpenAI API")
+    assert score_resume(make_resume(projects=[one_signal])).penalty == 10                          # B
+    assert score_resume(make_resume(projects=[TUTORIAL])).penalty == 5                             # C
+    assert score_resume(make_resume(projects=[GENUINE])).penalty == 0                              # D
+
+
+def test_weaker_secondary_ai_project_never_adds_penalty():
+    base = score_resume(make_resume(projects=[GENUINE])).penalty
+    for weak in (WRAPPER_PROJECT, TUTORIAL):
+        assert score_resume(make_resume(projects=[weak, GENUINE])).penalty == base == 0
+        assert score_resume(make_resume(projects=[GENUINE, weak])).penalty == 0
+
+
+def test_penalty_judged_on_strongest_when_all_are_thin():
+    one_signal = _p("QA", "Built a document Q&A tool with embeddings and the OpenAI API")
+    assert score_resume(make_resume(projects=[WRAPPER_PROJECT, one_signal])).penalty == 10
+
+
+# --- no double counting across categories ------------------------------------------------------
+def _cats(desc):
+    s = score_resume(make_resume(projects=[_p("X", "Built an OpenAI LLM tool. " + desc, ("Python",))]))
+    return s
+
+
+def test_one_piece_of_evidence_is_paid_in_only_one_category():
+    base = _cats("")
+    # concurrency -> Python/backend only
+    c = _cats("Built async concurrent workers.")
+    assert c.python_backend - base.python_backend == 4 and c.engineering_depth == base.engineering_depth
+    # queues / caching -> engineering only
+    q = _cats("Built a Celery queue and cache layer.")
+    assert q.engineering_depth - base.engineering_depth == 1 and q.python_backend == base.python_backend
+    # monitoring / logging -> engineering only (not AI evaluation)
+    m = _cats("Built monitoring and logging.")
+    assert m.engineering_depth - base.engineering_depth == 1 and m.ai_project_depth == base.ai_project_depth
+    # Kubernetes -> Docker only (not cloud)
+    k = _cats("Built a Kubernetes setup.")
+    assert k.cloud_fullstack - base.cloud_fullstack == 5
+    # Redis -> database only
+    r = _cats("Built a Redis store.")
+    assert r.python_backend - base.python_backend == 6 and r.engineering_depth == base.engineering_depth

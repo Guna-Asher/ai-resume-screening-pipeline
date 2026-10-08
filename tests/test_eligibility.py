@@ -28,7 +28,7 @@ def test_missing_ai_rejects_and_skills_only_ai_is_not_enough():
     plain = ExtractedProject(name="Shop", description="Built an e-commerce API", technologies=["Python"])
     assert not check_eligibility(make_resume(projects=[plain])).has_ai_evidence
     r = check_eligibility(make_resume(skills=["Python", "LangChain", "RAG"], projects=[plain]))
-    assert not r.eligible and "only in the skills list" in r.rejection_reasons[0]
+    assert not r.eligible and "implementation context" in r.rejection_reasons[0]
 
 
 def test_js_java_react_only_rejects():
@@ -47,3 +47,50 @@ def test_other_languages_do_not_disqualify():
 def test_ineligible_candidate_gets_no_score_or_rank():
     res = screen_resume(make_resume(skills=["Java"]))
     assert res.status is ScreeningStatus.REJECTED and res.score is None and res.rank is None
+
+
+# --- AI false positives: a bare mention is not implementation evidence -----------------------------
+def _ai_eligible(description="", skills=("Python",), technologies=(), name="Item", job=False):
+    from src.models import ExtractedExperience
+    if job:
+        e = ExtractedExperience(role=name, company="Co", description=description, technologies=list(technologies))
+        return check_eligibility(make_resume(skills=skills, experience=[e]))
+    p = ExtractedProject(name=name, description=description, technologies=list(technologies))
+    return check_eligibility(make_resume(skills=skills, projects=[p]))
+
+
+import pytest  # noqa: E402
+
+
+@pytest.mark.parametrize("text", [
+    "AI enthusiast",
+    "Interested in GPT and large language models",
+    "ChatGPT user",
+    "Familiar with ChatGPT",
+    "Attended an AI workshop on LLMs",
+    "Built dashboards in Python; used ChatGPT for productivity",
+    "Used GPT for productivity",
+])
+def test_ai_false_positives_are_rejected(text):
+    assert not _ai_eligible(text, job=True).eligible
+    assert not _ai_eligible(text).eligible
+
+
+def test_generic_ai_skill_with_no_project_or_job_evidence_rejects():
+    r = check_eligibility(make_resume(skills=["Python", "AI", "LLM", "ChatGPT", "Machine Learning"]))
+    assert not r.eligible and not r.has_ai_evidence
+
+
+@pytest.mark.parametrize("text", [
+    "Built a RAG pipeline using OpenAI embeddings and FAISS.",
+    "Implemented a LangGraph agent with tool calling.",
+    "Developed an application using the OpenAI API.",
+])
+def test_genuine_ai_implementation_is_accepted(text):
+    assert _ai_eligible(text).eligible
+    assert _ai_eligible(text, job=True).eligible
+
+
+def test_ai_in_tech_list_counts_only_when_description_shows_implementation():
+    assert _ai_eligible("Built a document Q&A service", technologies=["Python", "LangChain"]).eligible
+    assert not _ai_eligible("Interested in document Q&A", technologies=["Python", "LangChain"]).eligible

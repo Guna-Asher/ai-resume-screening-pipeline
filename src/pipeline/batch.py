@@ -41,14 +41,15 @@ def rank(results: list[ScreeningResult]) -> list[ScreeningResult]:
     return ranked + [r for r in results if r.status is not ScreeningStatus.RANKED]
 
 
+def safe_screen(resume: ExtractedResume) -> ScreeningResult:
+    try:
+        return screen_resume(resume)
+    except Exception as e:  # one bad candidate must never stop the batch
+        return failed_result(resume.source_file, f"{type(e).__name__}: {e}")
+
+
 def screen_batch(resumes: list[ExtractedResume]) -> list[ScreeningResult]:
-    results = []
-    for resume in resumes:
-        try:
-            results.append(screen_resume(resume))
-        except Exception as e:  # one bad candidate must never stop the batch
-            results.append(failed_result(resume.source_file, f"{type(e).__name__}: {e}"))
-    return rank(results)
+    return rank([safe_screen(r) for r in resumes])
 
 
 def summarize(results: list[ScreeningResult], total_files: int, duplicates: int,
