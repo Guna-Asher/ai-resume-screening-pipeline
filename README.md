@@ -8,19 +8,22 @@ It ingests PDF resumes, applies a deterministic Python + AI eligibility filter, 
 
 ## Quick start
 
-### Docker
+```bash
+docker build -t ai-resume-screening .
+cp .env.example .env                  # keys inside are optional; --env-file needs the file to exist
+mkdir -p resumes output               # put PDFs (or a ZIP) in ./resumes
 
-    docker build -t ai-resume-screening .
+# CLI
+docker run --rm -v "$PWD/resumes:/app/resumes" -v "$PWD/output:/app/output" --env-file .env \
+  ai-resume-screening python main.py --input ./resumes --output ./output/results.json
 
-    cp .env.example .env
+# Web UI, then open http://localhost:8000
+docker run --rm -p 8000:8000 --env-file .env \
+  ai-resume-screening uvicorn src.web.app:app --host 0.0.0.0 --port 8000
 
-    docker run --rm       -v "$PWD/resumes:/app/resumes"       -v "$PWD/output:/app/output"       --env-file .env       ai-resume-screening       python main.py --input ./resumes --output ./output/results.json
-
-Run the Web UI:
-
-    docker run --rm -p 8000:8000 --env-file .env       ai-resume-screening       uvicorn src.web.app:app --host 0.0.0.0 --port 8000
-
-Then open http://localhost:8000.
+# Guided interactive CLI (-it is required)
+docker run --rm -it -v "$PWD:/app" -v "$PWD/output:/app/output" --env-file .env ai-resume-screening
+```
 
 Run tests:
 
