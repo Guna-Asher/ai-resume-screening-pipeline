@@ -93,6 +93,9 @@ docker run --rm -it -v "$PWD:/app" -v "$PWD/output:/app/output" --env-file .env 
 Inside the guided mode, paths are relative to the mounted project directory (e.g. `./resumes.zip`), and results saved
 under `./output` appear on the host. The commands above that pass an explicit `python main.py ...` are non-interactive.
 
+Without Docker (Python 3.10+): `python -m venv .venv && source .venv/bin/activate && pip install -e '.[dev]'`, then the
+`python main.py ...` and `pytest` commands run directly (`uvicorn src.web.app:app --port 8000` for the web UI).
+
 `docker compose run --rm app` runs the CLI with the same mounts (`.env` optional). On Linux hosts make sure
 `./output` is writable by UID 1000. Real-API check for the fallback (skipped without a key):
 `docker run --rm --env-file .env ai-resume-screening python scripts/smoke_openrouter.py`.
