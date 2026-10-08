@@ -7,7 +7,16 @@ from pypdf import PdfReader
 
 from src.models import IngestedDocument, IngestionStatus
 
-MIN_TEXT_CHARS = 200  # below this the PDF is likely scanned/image-only -> needs fallback
+MIN_TEXT_CHARS = 200      # below this the PDF is likely scanned/image-only -> needs fallback
+MIN_ALPHA_RATIO = 0.5     # garbled font encodings extract as "(cid:12)" / symbol soup
+
+
+def is_usable_text(text: str) -> bool:
+    """Is pypdf's output good enough to parse deterministically?"""
+    stripped = "".join(text.split())
+    if len(text.strip()) < MIN_TEXT_CHARS or not stripped:
+        return False
+    return sum(c.isalpha() for c in stripped) / len(stripped) >= MIN_ALPHA_RATIO
 
 
 def discover_pdfs(input_dir: Path) -> list[Path]:
@@ -53,6 +62,6 @@ def _ingest_one(path: Path, seen: dict[str, str]) -> IngestedDocument:
         return IngestedDocument(source_file=name, status=IngestionStatus.ERROR,
                                 content_hash=digest, error=f"unreadable PDF: {type(e).__name__}: {e}")
 
-    status = IngestionStatus.OK if len(text) >= MIN_TEXT_CHARS else IngestionStatus.NEEDS_FALLBACK
-    return IngestedDocument(source_file=name, status=status, content_hash=digest,
+    status = IngestionStatus.OK if is_usable_text(text) else IngestionStatus.NEEDS_FALLBACK
+    return IngestedDocument(source_file=name, path=str(path), status=status, content_hash=digest,
                             text=text, page_count=pages)

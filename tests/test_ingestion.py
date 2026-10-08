@@ -1,31 +1,10 @@
 from pathlib import Path
 
-from src.ingestion import ingest_directory
+from src.ingestion import ingest_directory, render_pages
 from src.models import IngestionStatus, ScreeningStatus
 from src.pipeline import failures_from_ingestion
 
-
-def make_pdf(path: Path, lines: list[str]) -> None:
-    """Write a minimal single-page text PDF (no third-party PDF writer needed)."""
-    stream = "BT /F1 10 Tf 12 TL 40 760 Td " + " ".join(f"({l}) Tj T*" for l in lines) + " ET"
-    objs = ["<< /Type /Catalog /Pages 2 0 R >>",
-            "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R "
-            "/Resources << /Font << /F1 5 0 R >> >> >>",
-            f"<< /Length {len(stream)} >>\nstream\n{stream}\nendstream",
-            "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"]
-    out, offsets = b"%PDF-1.4\n", []
-    for i, o in enumerate(objs, 1):
-        offsets.append(len(out))
-        out += f"{i} 0 obj\n{o}\nendobj\n".encode()
-    xref = len(out)
-    out += f"xref\n0 {len(objs) + 1}\n0000000000 65535 f \n".encode()
-    out += b"".join(f"{o:010d} 00000 n \n".encode() for o in offsets)
-    out += f"trailer\n<< /Size {len(objs) + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF".encode()
-    path.write_bytes(out)
-
-
-LINES = [f"Line {i} Built a Python RAG agent with FastAPI and PostgreSQL" for i in range(8)]
+from .pdf_fixtures import LINES, make_pdf, make_scanned_pdf
 
 
 def test_duplicate_files_detected(tmp_path):
@@ -47,5 +26,20 @@ def test_malformed_pdf_does_not_crash_batch(tmp_path):
     assert docs["empty.pdf"].status is IngestionStatus.ERROR
     assert docs["scanned.pdf"].status is IngestionStatus.NEEDS_FALLBACK
     failed = failures_from_ingestion(list(docs.values()))
-    assert {r.source_file for r in failed} == {"bad.pdf", "empty.pdf", "scanned.pdf"}
+    assert {r.source_file for r in failed} == {"bad.pdf", "empty.pdf"}   # scanned -> extractor, not failure
     assert all(r.status is ScreeningStatus.FAILED for r in failed)
+
+
+def test_image_only_and_garbled_pdfs_need_fallback_and_carry_their_path(tmp_path):
+    make_scanned_pdf(tmp_path / "scan.pdf", LINES)
+    make_pdf(tmp_path / "garbled.pdf", ["(cid:12)(cid:7) 1234567890 ###" for _ in range(20)])
+    docs = {d.source_file: d for d in ingest_directory(tmp_path)}
+    assert docs["scan.pdf"].status is IngestionStatus.NEEDS_FALLBACK and docs["scan.pdf"].text == ""
+    assert docs["garbled.pdf"].status is IngestionStatus.NEEDS_FALLBACK
+    assert docs["scan.pdf"].path == str(tmp_path / "scan.pdf")
+
+
+def test_pages_render_locally_to_jpeg_and_are_capped(tmp_path):
+    make_scanned_pdf(tmp_path / "scan.pdf", LINES)
+    pages = render_pages(str(tmp_path / "scan.pdf"))
+    assert len(pages) == 1 and pages[0].startswith(b"\xff\xd8")

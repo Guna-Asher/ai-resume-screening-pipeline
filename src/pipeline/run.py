@@ -3,7 +3,7 @@ import time
 from pathlib import Path
 from typing import Callable
 
-from src.extraction import ground_resume
+from src.extraction import ExtractionError, ground_resume
 from src.ingestion import ingest_directory
 from src.models import BatchSummary, ExtractedResume, IngestedDocument, IngestionStatus
 
@@ -12,21 +12,18 @@ from .batch import failed_result, failures_from_ingestion, rank, safe_screen, su
 Extractor = Callable[[IngestedDocument], ExtractedResume]
 
 
-def extraction_not_implemented(doc: IngestedDocument) -> ExtractedResume:
-    raise NotImplementedError("LLM extraction is not implemented yet")
-
-
-def run_batch(input_dir: Path, extractor: Extractor = extraction_not_implemented) -> BatchSummary:
+def run_batch(input_dir: Path, extractor: Extractor) -> BatchSummary:
     start = time.monotonic()
     docs = ingest_directory(input_dir)
     results = failures_from_ingestion(docs)
     for doc in docs:
-        if doc.status is not IngestionStatus.OK:
+        if doc.status not in (IngestionStatus.OK, IngestionStatus.NEEDS_FALLBACK):
             continue
         try:
             resume = ground_resume(extractor(doc))
         except Exception as e:  # extraction failure is candidate-level
-            results.append(failed_result(doc.source_file, f"extraction failed: {type(e).__name__}: {e}"))
+            msg = str(e) if isinstance(e, ExtractionError) else f"{type(e).__name__}: {e}"
+            results.append(failed_result(doc.source_file, f"extraction failed: {msg}"))
             continue
         results.append(safe_screen(resume))
     duplicates = sum(d.status is IngestionStatus.DUPLICATE for d in docs)

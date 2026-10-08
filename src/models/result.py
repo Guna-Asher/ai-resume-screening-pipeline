@@ -32,5 +32,6 @@ class BatchSummary(BaseModel):
     rejected: int = 0
     failed: int = 0
     duplicates_skipped: int = 0
+    llm_fallback_extractions: int = 0  # resumes whose text came from the vision LLM
     duration_seconds: float = 0.0
     results: list[ScreeningResult] = Field(default_factory=list)

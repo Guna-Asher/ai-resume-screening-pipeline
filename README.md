@@ -21,21 +21,19 @@ LLMs are used for semantic extraction and project-quality assessment. Determinis
 ## Pipeline
 
 ```text
-Resumes
+Resumes (PDF)
    ↓
-PDF extraction
-   ↓
-Structured candidate extraction
-   ↓
-Hard eligibility filter
-   ↓
-AI/project quality assessment
-   ↓
-Deterministic scoring
-   ↓
-GitHub enrichment
-   ↓
-Ranked JSON output
+pypdf text extraction ── usable text ──→ rule-based section parser ──┐
+   │                                                                  │
+   └─ scanned / garbled / no sections ─→ render pages locally         │
+                                          → OpenRouter vision LLM     │
+                                          → Pydantic validation ──────┤
+                                                                      ↓
+                                              evidence grounding against the resume text
+                                                                      ↓
+                                              hard eligibility → deterministic scoring
+                                                                      ↓
+                                              GitHub enrichment (not yet) → ranked JSON
 ```
 
 ## Eligibility
@@ -92,30 +90,44 @@ whose description shows implementation. "AI enthusiast", "familiar with ChatGPT"
 
 ## LLM Usage
 
-The LLM is used for semantic tasks such as:
+**OpenRouter is used only when normal PDF text extraction is insufficient. It does not determine
+eligibility, score, penalty, or rank.**
 
-* extracting candidate/project information
-* identifying implementation evidence
-* assessing project depth
-* producing short explanations
+Normal digital PDFs never touch the LLM: pypdf extracts the text and a rule-based parser
+(`src/extraction/deterministic.py`) splits it into skills / projects / experience / education.
 
-LLM output is required to follow a structured schema and is validated before being used by the pipeline.
+The vision fallback runs when pypdf text is empty or garbled (scanned PDFs), or when text exists but no
+project/experience section can be recognised. Pages are rendered locally with PyMuPDF (max 4 pages,
+JPEG) and sent, together with a fixed extraction prompt, to OpenRouter `/api/v1/chat/completions` using
+a strict JSON Schema generated from the `ResumeExtraction` Pydantic model. The model is asked only
+*"what does the resume say?"*: it transcribes the text and lists projects, experience and skills with
+verbatim evidence snippets. The schema has no eligibility, score, rank, or opinion fields.
 
-The LLM does not directly decide the final score or eligibility.
+The response is parsed and validated by Pydantic (one retry on invalid output), then every skill,
+project, job and URL is checked against the transcribed text (case/whitespace/punctuation-insensitive);
+unsupported items are discarded. The result enters the same deterministic eligibility and scoring code
+as text-extracted resumes. All OpenRouter request details live in `src/llm/openrouter.py`.
+
+| Variable | Meaning |
+| --- | --- |
+| `OPENROUTER_API_KEY` | Required only for the fallback. Without it, fallback candidates are reported as `failed`. |
+| `OPENROUTER_MODEL` | Default `anthropic/claude-sonnet-4.6`; must support vision + structured outputs. |
 
 ## Failure Handling
 
-The batch should continue when an individual resume, LLM call, or GitHub enrichment request fails.
+Every failure is isolated to one candidate; the batch always finishes and writes `results.json`.
 
-Examples:
+| Situation | Result |
+| --- | --- |
+| unreadable / malformed PDF | `failed` (ingestion error) |
+| duplicate file (same content hash) | skipped, counted in `duplicates_skipped` |
+| scanned PDF, no API key | `failed`: "...set OPENROUTER_API_KEY" |
+| LLM timeout, HTTP error, HTTP 429 | `failed`; **not retried** |
+| LLM returns invalid JSON / schema mismatch | one retry (with the validation error), then `failed` |
+| no Python or no AI implementation evidence | `rejected` with reasons; no score, no rank |
+| GitHub API failure (later stage) | candidate keeps their score without GitHub points |
 
-* unreadable resume → candidate-level failure
-* invalid LLM response → retry/reject safely
-* GitHub API failure → continue without GitHub enrichment
-* missing GitHub profile → candidate remains eligible
-* missing required evidence → candidate is rejected
-
-The system fails closed rather than inventing unsupported results.
+The system fails closed: unsupported claims are discarded rather than guessed.
 
 ## Running with Docker
 
@@ -132,7 +144,9 @@ docker run --rm \
   python main.py --input ./resumes --output ./output/results.json
 ```
 
-Add `--env-file .env` once LLM/GitHub stages need credentials (copy `.env.example` to `.env`).
+To enable the scanned-PDF fallback, copy `.env.example` to `.env`, set `OPENROUTER_API_KEY`, and add
+`--env-file .env` to the `docker run` command (Compose reads `.env` automatically). The key is never
+baked into the image or written to the output.
 
 Or with Compose (one service, same mounts, `.env` optional):
 
@@ -152,9 +166,14 @@ The container runs as UID 1000; on Linux hosts make sure `./output` is writable 
 Optional local run (Python 3.10+): `python -m venv .venv && .venv/bin/pip install pydantic pypdf httpx pytest`,
 then `.venv/bin/pytest`. `.venv` is git-ignored.
 
-> **Status:** ingestion, eligibility and scoring are implemented and tested. LLM extraction and GitHub
-> enrichment are not yet implemented, so the CLI currently reports every readable PDF as `failed`
-> ("LLM extraction is not implemented yet"); unreadable and duplicate PDFs are already handled.
+Optional real-API check (skipped unless a key is set; the normal tests never call OpenRouter):
+
+```bash
+docker run --rm --env-file .env ai-resume-screening python scripts/smoke_openrouter.py
+```
+
+> **Status:** ingestion, extraction (text + LLM fallback), eligibility and scoring are implemented and
+> tested. GitHub enrichment is not implemented yet; the GitHub score is 0 for everyone.
 
 ## Environment
 
@@ -185,7 +204,8 @@ docker run --rm ai-resume-screening pytest
 ```
 
 Tests cover eligibility (including AI false positives), deterministic scoring, the penalty ladder,
-no double-counting across categories, determinism, duplicate and malformed PDFs, and batch resilience.
+no double-counting, determinism, duplicate / malformed / scanned PDFs, rule-based parsing, the OpenRouter
+adapter and LLM extraction (retry, timeout, 429, grounding; all against fakes, no API key), and batch resilience.
 
 ## Design Decisions
 

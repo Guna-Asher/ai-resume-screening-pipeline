@@ -13,6 +13,7 @@ RUN useradd --create-home --uid 1000 app && chown app:app /app
 COPY --chown=app:app main.py ./
 COPY --chown=app:app src ./src
 COPY --chown=app:app tests ./tests
+COPY --chown=app:app scripts ./scripts
 RUN mkdir -p resumes output && chown app:app resumes output
 USER app
 

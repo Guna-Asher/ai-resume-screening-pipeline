@@ -12,6 +12,7 @@ class IngestionStatus(str, Enum):
 
 class IngestedDocument(BaseModel):
     source_file: str
+    path: str | None = None  # kept so fallback extraction can render the pages
     status: IngestionStatus
     content_hash: str | None = None
     text: str = ""

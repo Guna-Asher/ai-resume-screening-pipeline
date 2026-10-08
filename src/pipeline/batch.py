@@ -22,13 +22,9 @@ def screen_resume(resume: ExtractedResume) -> ScreeningResult:
 
 
 def failures_from_ingestion(docs: list[IngestedDocument]) -> list[ScreeningResult]:
-    out = []
-    for d in docs:
-        if d.status is IngestionStatus.ERROR:
-            out.append(failed_result(d.source_file, d.error or "ingestion error"))
-        elif d.status is IngestionStatus.NEEDS_FALLBACK:
-            out.append(failed_result(d.source_file, "too little extractable text; fallback extraction required"))
-    return out
+    """Unreadable PDFs. (NEEDS_FALLBACK documents go to the extractor, not here.)"""
+    return [failed_result(d.source_file, d.error or "ingestion error")
+            for d in docs if d.status is IngestionStatus.ERROR]
 
 
 def rank(results: list[ScreeningResult]) -> list[ScreeningResult]:
@@ -55,7 +51,10 @@ def screen_batch(resumes: list[ExtractedResume]) -> list[ScreeningResult]:
 def summarize(results: list[ScreeningResult], total_files: int, duplicates: int,
               duration: float) -> BatchSummary:
     count = lambda s: sum(r.status is s for r in results)  # noqa: E731
+    llm_used = sum(r.candidate is not None and r.candidate.extraction_method == "llm_vision"
+                   for r in results)
     return BatchSummary(total_files=total_files, ranked=count(ScreeningStatus.RANKED),
                         rejected=count(ScreeningStatus.REJECTED), failed=count(ScreeningStatus.FAILED),
-                        duplicates_skipped=duplicates, duration_seconds=round(duration, 2),
+                        duplicates_skipped=duplicates, llm_fallback_extractions=llm_used,
+                        duration_seconds=round(duration, 2),
                         results=results)
